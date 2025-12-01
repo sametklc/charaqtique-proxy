@@ -93,10 +93,12 @@ app.post('/api/chat', async (req, res) => {
     let response = '';
     
     try {
-      // Daha basit bir model kullan - meta/llama-3-8b-instruct
-      const fullPrompt = `${systemPrompt}\n\nUser: ${message}\n\nAssistant:`;
+      // Meta Llama 3 için doğru prompt formatı
+      const fullPrompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n${systemPrompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n${message}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n`;
       
       console.log('📝 Full prompt length:', fullPrompt.length);
+      console.log('📝 System prompt:', systemPrompt.substring(0, 100) + '...');
+      console.log('📝 User message:', message);
       
       const output = await replicate.run(
         "meta/llama-3-8b-instruct",
@@ -105,7 +107,8 @@ app.post('/api/chat', async (req, res) => {
             prompt: fullPrompt,
             max_tokens: 500,
             temperature: 0.7,
-            top_p: 0.9
+            top_p: 0.9,
+            stop_sequences: ["<|eot_id|>", "<|end_of_text|>"]
           }
         }
       );
@@ -113,49 +116,67 @@ app.post('/api/chat', async (req, res) => {
       console.log('📤 Replicate output type:', typeof output);
       console.log('📤 Replicate output is array:', Array.isArray(output));
       
-      // Replicate output'u işle
-      if (typeof output === 'string') {
-        response = output;
-      } else if (Array.isArray(output)) {
+      // Replicate output stream olabilir, tüm parçaları birleştir
+      if (Array.isArray(output)) {
         // Array ise tüm string'leri birleştir
-        response = output.filter(item => typeof item === 'string').join('').trim();
+        response = output
+          .filter(item => item != null)
+          .map(item => typeof item === 'string' ? item : String(item))
+          .join('')
+          .trim();
+      } else if (typeof output === 'string') {
+        response = output;
       } else if (output && typeof output === 'object') {
         // Object ise text veya response field'ını ara
-        response = output.text || output.response || output.output || JSON.stringify(output);
+        response = output.text || output.response || output.output || output.content || JSON.stringify(output);
       } else {
         response = String(output);
       }
 
-      // Response'u temizle
+      console.log('📥 Raw response:', response.substring(0, 200));
+
+      // Response'u temizle - Llama format token'larını kaldır
       response = response
+        .replace(/<\|begin_of_text\|>/g, '')
+        .replace(/<\|start_header_id\|>/g, '')
+        .replace(/<\|end_header_id\|>/g, '')
+        .replace(/<\|eot_id\|>/g, '')
+        .replace(/<\|end_of_text\|>/g, '')
+        .replace(/system.*?assistant:/s, '')
         .replace(/User:.*?Assistant:/s, '')
         .replace(/Assistant:/g, '')
         .trim();
         
       if (!response || response.length < 3) {
+        console.warn('⚠️ Response too short, using default');
         response = "I'm here, how can I help you?";
       }
       
-      console.log('✅ Response generated:', response.substring(0, 100) + '...');
+      console.log('✅ Final response:', response.substring(0, 100) + '...');
       
     } catch (replicateError) {
       console.error('❌ Replicate API Error:', replicateError);
       console.error('❌ Error message:', replicateError.message);
+      console.error('❌ Error name:', replicateError.name);
       console.error('❌ Error stack:', replicateError.stack);
       
       // Daha detaylı hata mesajı
-      if (replicateError.message) {
-        console.error('❌ Full error:', JSON.stringify(replicateError, null, 2));
+      if (replicateError.response) {
+        console.error('❌ Error response:', replicateError.response.data);
+        console.error('❌ Error status:', replicateError.response.status);
       }
       
-      // Fallback: Basit bir response döndür
-      response = `I understand you said "${message.substring(0, 50)}...". Let me respond naturally based on my character.`;
-      
-      // Hata fırlatma, sadece logla ve fallback response kullan
-      console.log('⚠️ Using fallback response due to error');
+      // Hata fırlat ki üst seviye catch bloğu yakalasın
+      throw new Error(`Replicate API error: ${replicateError.message || 'Unknown error'}`);
     }
 
     console.log('✅ Final response:', response.substring(0, 100) + '...');
+
+    if (!response || response.length < 3) {
+      console.warn('⚠️ Empty response, using character-based fallback');
+      // Karakter özelliklerine göre daha iyi bir fallback
+      response = `*${characterPrompt.includes('Romantic') ? 'smiles warmly* ' : ''}${message}. That's interesting. Tell me more about that.`;
+    }
 
     res.json({
       response,
@@ -163,11 +184,17 @@ app.post('/api/chat', async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Error in chat:', error);
+    console.error('❌ Error message:', error.message);
     console.error('❌ Error stack:', error.stack);
+    
+    // Hata durumunda bile kullanıcıya anlamlı bir mesaj döndür
+    const errorResponse = `I'm having trouble processing that right now, but I heard you say "${message.substring(0, 30)}...". Can you try rephrasing that?`;
+    
     res.status(500).json({ 
+      response: errorResponse,
       error: 'Failed to get chat response', 
       details: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      characterId
     });
   }
 });
