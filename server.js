@@ -91,53 +91,39 @@ app.post('/api/chat', async (req, res) => {
     // System prompt'u direkt kullan - zaten içinde tüm bilgiler var
     const systemPrompt = characterPrompt;
 
-    console.log('🤖 Calling Replicate API...');
+    console.log('🤖 Calling Replicate API with openai/gpt-4o-mini...');
+    console.log('📝 System prompt:', systemPrompt.substring(0, 100) + '...');
+    console.log('📝 User message:', message);
     
     let response = '';
     
     try {
-      // Meta Llama 3 için doğru prompt formatı
-      const fullPrompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n${systemPrompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n${message}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n`;
-      
-      console.log('📝 Full prompt length:', fullPrompt.length);
-      console.log('📝 System prompt:', systemPrompt.substring(0, 100) + '...');
-      console.log('📝 User message:', message);
-      
-      console.log('🤖 Calling Replicate with model: meta/meta-llama-3-8b-instruct');
-      
-      // Timeout ile Replicate API çağrısı
-      const replicatePromise = replicate.run(
-        "meta/meta-llama-3-8b-instruct",
+      // Replicate üzerinden OpenAI GPT-4o-mini kullan
+      const output = await replicate.run(
+        "openai/gpt-4o-mini",
         {
           input: {
-            prompt: fullPrompt,
+            system_prompt: systemPrompt,
+            prompt: message,
             max_tokens: 500,
-            temperature: 0.7,
-            top_p: 0.9
+            temperature: 0.7
           }
         }
       );
-      
-      // Timeout wrapper
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Replicate API timeout')), REPLICATE_TIMEOUT);
-      });
-      
-      const output = await Promise.race([replicatePromise, timeoutPromise]);
 
       console.log('📤 Replicate output type:', typeof output);
       console.log('📤 Replicate output is array:', Array.isArray(output));
       
-      // Replicate output stream olabilir, tüm parçaları birleştir
-      if (Array.isArray(output)) {
+      // Replicate output'u işle
+      if (typeof output === 'string') {
+        response = output;
+      } else if (Array.isArray(output)) {
         // Array ise tüm string'leri birleştir
         response = output
           .filter(item => item != null)
           .map(item => typeof item === 'string' ? item : String(item))
           .join('')
           .trim();
-      } else if (typeof output === 'string') {
-        response = output;
       } else if (output && typeof output === 'object') {
         // Object ise text veya response field'ını ara
         response = output.text || output.response || output.output || output.content || JSON.stringify(output);
@@ -146,19 +132,10 @@ app.post('/api/chat', async (req, res) => {
       }
 
       console.log('📥 Raw response:', response.substring(0, 200));
-
-      // Response'u temizle - Llama format token'larını kaldır
-      response = response
-        .replace(/<\|begin_of_text\|>/g, '')
-        .replace(/<\|start_header_id\|>/g, '')
-        .replace(/<\|end_header_id\|>/g, '')
-        .replace(/<\|eot_id\|>/g, '')
-        .replace(/<\|end_of_text\|>/g, '')
-        .replace(/system.*?assistant:/s, '')
-        .replace(/User:.*?Assistant:/s, '')
-        .replace(/Assistant:/g, '')
-        .trim();
-        
+      
+      // Response'u temizle
+      response = response.trim();
+      
       if (!response || response.length < 3) {
         console.warn('⚠️ Response too short, using default');
         response = "I'm here, how can I help you?";
