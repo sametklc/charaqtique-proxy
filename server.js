@@ -79,17 +79,19 @@ app.post('/api/create-images', async (req, res) => {
 // Chat endpoint
 app.post('/api/chat', async (req, res) => {
   try {
-    const { characterId, message, characterPrompt } = req.body;
+    const { characterId, message, characterPrompt, characterName } = req.body;
 
-    console.log('📥 Chat request received:', { characterId, message: message?.substring(0, 50) + '...' });
+    console.log('📥 Chat request received:', { characterId, characterName, message: message?.substring(0, 50) + '...' });
 
     if (!message || !characterPrompt) {
       console.error('❌ Missing required fields');
       return res.status(400).json({ error: 'Message and characterPrompt are required' });
     }
 
-    // OpenAI GPT-4o-mini ile chat - Replicate'te bu model yok, meta/llama kullan
-    const systemPrompt = `${characterPrompt}\n\nRemember to stay in character and respond naturally based on the traits above.`;
+    // System prompt'a karakter ismini ekle
+    const systemPrompt = characterName 
+      ? `${characterPrompt}\n\nRemember: Your name is ${characterName}. Always use this name when referring to yourself.`
+      : `${characterPrompt}\n\nRemember to stay in character and respond naturally based on the traits above.`;
 
     console.log('🤖 Calling Replicate API...');
     
