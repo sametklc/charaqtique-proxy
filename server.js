@@ -79,9 +79,9 @@ app.post('/api/create-images', async (req, res) => {
 // Chat endpoint
 app.post('/api/chat', async (req, res) => {
   try {
-    const { characterId, message, characterPrompt, characterName } = req.body;
+    const { characterId, message, characterPrompt, characterName, messageHistory } = req.body;
 
-    console.log('📥 Chat request received:', { characterId, characterName, message: message?.substring(0, 50) + '...' });
+    console.log('📥 Chat request received:', { characterId, characterName, message: message?.substring(0, 50) + '...', historyLength: messageHistory?.length || 0 });
 
     if (!message || !characterPrompt) {
       console.error('❌ Missing required fields');
@@ -94,17 +94,46 @@ app.post('/api/chat', async (req, res) => {
     console.log('🤖 Calling Replicate API with openai/gpt-4o-mini...');
     console.log('📝 System prompt:', systemPrompt.substring(0, 100) + '...');
     console.log('📝 User message:', message);
+    console.log('📝 Message history length:', messageHistory?.length || 0);
     
     let response = '';
     
     try {
+      // Mesaj geçmişini hazırla
+      const messages = [];
+      
+      // System message ekle
+      messages.push({
+        role: 'system',
+        content: systemPrompt
+      });
+      
+      // Mesaj geçmişini ekle (eğer varsa)
+      if (messageHistory && Array.isArray(messageHistory)) {
+        messageHistory.forEach(msg => {
+          if (msg.role && msg.content) {
+            messages.push({
+              role: msg.role,
+              content: msg.content
+            });
+          }
+        });
+      }
+      
+      // Son kullanıcı mesajını ekle
+      messages.push({
+        role: 'user',
+        content: message
+      });
+      
+      console.log('📤 Total messages to send:', messages.length);
+      
       // Replicate üzerinden OpenAI GPT-4o-mini kullan
       const output = await replicate.run(
         "openai/gpt-4o-mini",
         {
           input: {
-            system_prompt: systemPrompt,
-            prompt: message,
+            messages: messages,
             max_tokens: 500,
             temperature: 0.7
           }
