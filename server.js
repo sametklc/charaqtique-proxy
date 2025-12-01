@@ -15,6 +15,9 @@ const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 });
 
+// Replicate API timeout ayarı
+const REPLICATE_TIMEOUT = 60000; // 60 saniye
+
 // Karakter görselleri oluştur
 app.post('/api/create-images', async (req, res) => {
   try {
@@ -100,18 +103,27 @@ app.post('/api/chat', async (req, res) => {
       console.log('📝 System prompt:', systemPrompt.substring(0, 100) + '...');
       console.log('📝 User message:', message);
       
-      const output = await replicate.run(
-        "meta/llama-3-8b-instruct",
+      console.log('🤖 Calling Replicate with model: meta/meta-llama-3-8b-instruct');
+      
+      // Timeout ile Replicate API çağrısı
+      const replicatePromise = replicate.run(
+        "meta/meta-llama-3-8b-instruct",
         {
           input: {
             prompt: fullPrompt,
             max_tokens: 500,
             temperature: 0.7,
-            top_p: 0.9,
-            stop_sequences: ["<|eot_id|>", "<|end_of_text|>"]
+            top_p: 0.9
           }
         }
       );
+      
+      // Timeout wrapper
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Replicate API timeout')), REPLICATE_TIMEOUT);
+      });
+      
+      const output = await Promise.race([replicatePromise, timeoutPromise]);
 
       console.log('📤 Replicate output type:', typeof output);
       console.log('📤 Replicate output is array:', Array.isArray(output));
