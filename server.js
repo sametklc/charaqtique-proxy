@@ -246,20 +246,10 @@ app.post('/api/realtime/connect', async (req, res) => {
 
     console.log('🔌 WebSocket URL:', wsUrl);
 
-    // Instructions'a Türkçe desteği ve kısa cevaplar için direktifler ekle
+    // Basit ve çalışan instructions
     const enhancedInstructions = `${characterPrompt}
 
-CRITICAL RULES FOR VOICE CONVERSATION:
-- ALWAYS respond in the EXACT SAME LANGUAGE that the user is speaking. If the user speaks Turkish (Türkçe), you MUST respond in Turkish. If the user speaks English, respond in English. If the user speaks Spanish, respond in Spanish. Match the user's language perfectly.
-- Pay close attention to what the user is saying. Understand their message completely before responding.
-- Wait for the user to finish speaking completely before you respond. Do NOT interrupt.
-- Give SHORT and CONCISE answers. Keep responses brief (1-2 sentences maximum).
-- If the user starts speaking while you are talking, STOP immediately and listen.
-- Only speak when the user has finished speaking and there is silence.
-- Remember who you are: ${characterName || 'the character'}. Act according to your personality traits.
-- Be natural and conversational, but keep it brief.
-- IMPORTANT: Listen carefully to understand the user's message. Respond appropriately to what they actually said, not what you think they might have said.
-- If the user speaks Turkish, you MUST respond in Turkish. Turkish language support is critical.`;
+You are ${characterName || 'the character'}. Always respond in the SAME LANGUAGE the user speaks. If they speak Turkish, respond in Turkish. If they speak English, respond in English. Keep answers short (1-2 sentences). Wait for the user to finish before responding. If the user interrupts you, stop immediately.`;
 
     // iOS uygulamasına WebSocket URL'i ve auth bilgisini döndür
     const response = {
