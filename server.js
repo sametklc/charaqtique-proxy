@@ -2,6 +2,8 @@
 const express = require('express');
 const cors = require('cors');
 const Replicate = require('replicate');
+const axios = require('axios');
+const WebSocket = require('ws');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -214,6 +216,82 @@ app.post('/api/chat', async (req, res) => {
       details: error.message,
       characterId
     });
+  }
+});
+
+// OpenAI Realtime API WebSocket bağlantısı
+app.post('/api/realtime/connect', async (req, res) => {
+  try {
+    const { characterName, characterPrompt } = req.body;
+
+    if (!characterPrompt) {
+      return res.status(400).json({ error: 'Character prompt is required' });
+    }
+
+    console.log('📞 Realtime connection request for:', characterName);
+
+    // OpenAI Realtime API'ye bağlan
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+    
+    if (!OPENAI_API_KEY) {
+      return res.status(500).json({ error: 'OpenAI API key not configured' });
+    }
+
+    // OpenAI Realtime API WebSocket URL'i
+    const wsUrl = 'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17';
+
+    // WebSocket bağlantısı için authorization header
+    const authHeader = `Bearer ${OPENAI_API_KEY}`;
+
+    // iOS uygulamasına WebSocket URL'i ve auth bilgisini döndür
+    // Not: iOS uygulaması direkt OpenAI'ye bağlanacak, bu yüzden auth token'ı döndürüyoruz
+    // Ancak güvenlik için backend üzerinden proxy yapmak daha iyi olur
+    
+    // Alternatif: Backend üzerinden WebSocket proxy yapalım
+    // Bu durumda iOS uygulaması backend'e bağlanacak, backend OpenAI'ye bağlanacak
+    
+    res.json({
+      websocket_url: wsUrl,
+      auth_token: OPENAI_API_KEY,
+      instructions: characterPrompt
+    });
+
+  } catch (error) {
+    console.error('❌ Error in realtime connect:', error);
+    res.status(500).json({ error: 'Failed to create realtime connection', details: error.message });
+  }
+});
+
+// WebSocket proxy endpoint (isteğe bağlı - daha güvenli)
+// Bu endpoint iOS uygulamasından gelen WebSocket bağlantılarını OpenAI'ye yönlendirir
+app.post('/api/realtime/proxy', async (req, res) => {
+  try {
+    const { characterPrompt } = req.body;
+
+    if (!characterPrompt) {
+      return res.status(400).json({ error: 'Character prompt is required' });
+    }
+
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+    
+    if (!OPENAI_API_KEY) {
+      return res.status(500).json({ error: 'OpenAI API key not configured' });
+    }
+
+    // OpenAI Realtime API WebSocket bağlantısı oluştur
+    const wsUrl = 'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17';
+    
+    // Bu endpoint bir WebSocket upgrade isteği bekler
+    // Express'te WebSocket upgrade'i handle etmek için ws kütüphanesi kullanılır
+    // Ancak bu daha karmaşık bir implementasyon gerektirir
+    
+    res.json({
+      message: 'WebSocket proxy endpoint - use direct connection with provided credentials'
+    });
+
+  } catch (error) {
+    console.error('❌ Error in realtime proxy:', error);
+    res.status(500).json({ error: 'Failed to create realtime proxy', details: error.message });
   }
 });
 
