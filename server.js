@@ -78,24 +78,33 @@ app.post('/api/chat', async (req, res) => {
   try {
     const { characterId, message, characterPrompt } = req.body;
 
+    console.log('📥 Chat request received:', { characterId, message: message?.substring(0, 50) + '...' });
+
     if (!message || !characterPrompt) {
+      console.error('❌ Missing required fields');
       return res.status(400).json({ error: 'Message and characterPrompt are required' });
     }
 
-    // OpenAI GPT-4o-mini ile chat
+    // OpenAI GPT-4o-mini ile chat - Replicate'te bu model yok, meta/llama kullan
     const systemPrompt = `${characterPrompt}\n\nRemember to stay in character and respond naturally based on the traits above.`;
 
+    console.log('🤖 Calling Replicate API...');
+    
+    // Replicate'te OpenAI modeli yok, meta/llama-3.1-8b-instruct kullan
     const output = await replicate.run(
-      "openai/gpt-4o-mini",
+      "meta/llama-3.1-8b-instruct",
       {
         input: {
-          system_prompt: systemPrompt,
-          prompt: message,
+          prompt: `${systemPrompt}\n\nUser: ${message}\n\nAssistant:`,
           max_tokens: 500,
-          temperature: 0.7
+          temperature: 0.7,
+          top_p: 0.9
         }
       }
     );
+
+    console.log('📤 Replicate output type:', typeof output);
+    console.log('📤 Replicate output:', JSON.stringify(output).substring(0, 200));
 
     // Replicate output'u işle
     let response = '';
@@ -103,19 +112,46 @@ app.post('/api/chat', async (req, res) => {
       response = output;
     } else if (Array.isArray(output)) {
       response = output.join(' ');
-    } else if (output && output.text) {
-      response = output.text;
+    } else if (output && typeof output === 'object') {
+      // Stream response olabilir
+      if (output.text) {
+        response = output.text;
+      } else if (output.response) {
+        response = output.response;
+      } else {
+        // Tüm string değerleri birleştir
+        const parts = [];
+        for (const key in output) {
+          if (typeof output[key] === 'string') {
+            parts.push(output[key]);
+          }
+        }
+        response = parts.join(' ') || JSON.stringify(output);
+      }
     } else {
-      response = JSON.stringify(output);
+      response = String(output);
     }
+
+    // Response'u temizle (eğer system prompt içeriyorsa)
+    response = response.replace(/User:.*?Assistant:/s, '').trim();
+    if (!response) {
+      response = "I'm here, how can I help you?";
+    }
+
+    console.log('✅ Final response:', response.substring(0, 100) + '...');
 
     res.json({
       response,
       characterId
     });
   } catch (error) {
-    console.error('Error in chat:', error);
-    res.status(500).json({ error: 'Failed to get chat response', details: error.message });
+    console.error('❌ Error in chat:', error);
+    console.error('❌ Error stack:', error.stack);
+    res.status(500).json({ 
+      error: 'Failed to get chat response', 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
