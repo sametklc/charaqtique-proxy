@@ -88,10 +88,8 @@ app.post('/api/chat', async (req, res) => {
       return res.status(400).json({ error: 'Message and characterPrompt are required' });
     }
 
-    // System prompt'a karakter ismini ekle
-    const systemPrompt = characterName 
-      ? `${characterPrompt}\n\nRemember: Your name is ${characterName}. Always use this name when referring to yourself.`
-      : `${characterPrompt}\n\nRemember to stay in character and respond naturally based on the traits above.`;
+    // System prompt'u direkt kullan - zaten içinde tüm bilgiler var
+    const systemPrompt = characterPrompt;
 
     console.log('🤖 Calling Replicate API...');
     
