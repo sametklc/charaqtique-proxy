@@ -2,8 +2,6 @@
 const express = require('express');
 const cors = require('cors');
 const Replicate = require('replicate');
-const axios = require('axios');
-const WebSocket = require('ws');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -224,76 +222,62 @@ app.post('/api/realtime/connect', async (req, res) => {
   try {
     const { characterName, characterPrompt } = req.body;
 
+    console.log('📞 Realtime connection request received');
+    console.log('📞 Character name:', characterName);
+    console.log('📞 Character prompt length:', characterPrompt?.length || 0);
+
     if (!characterPrompt) {
+      console.error('❌ Character prompt is missing');
       return res.status(400).json({ error: 'Character prompt is required' });
     }
-
-    console.log('📞 Realtime connection request for:', characterName);
 
     // OpenAI Realtime API'ye bağlan
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
     
     if (!OPENAI_API_KEY) {
+      console.error('❌ OpenAI API key not configured');
       return res.status(500).json({ error: 'OpenAI API key not configured' });
     }
+
+    console.log('✅ OpenAI API key found (length:', OPENAI_API_KEY.length, ')');
 
     // OpenAI Realtime API WebSocket URL'i
     const wsUrl = 'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17';
 
-    // WebSocket bağlantısı için authorization header
-    const authHeader = `Bearer ${OPENAI_API_KEY}`;
+    console.log('🔌 WebSocket URL:', wsUrl);
+
+    // Instructions'a Türkçe desteği ve kısa cevaplar için direktifler ekle
+    const enhancedInstructions = `${characterPrompt}
+
+CRITICAL RULES FOR VOICE CONVERSATION:
+- ALWAYS respond in the EXACT SAME LANGUAGE that the user is speaking. If the user speaks Turkish (Türkçe), you MUST respond in Turkish. If the user speaks English, respond in English. If the user speaks Spanish, respond in Spanish. Match the user's language perfectly.
+- Pay close attention to what the user is saying. Understand their message completely before responding.
+- Wait for the user to finish speaking completely before you respond. Do NOT interrupt.
+- Give SHORT and CONCISE answers. Keep responses brief (1-2 sentences maximum).
+- If the user starts speaking while you are talking, STOP immediately and listen.
+- Only speak when the user has finished speaking and there is silence.
+- Remember who you are: ${characterName || 'the character'}. Act according to your personality traits.
+- Be natural and conversational, but keep it brief.
+- IMPORTANT: Listen carefully to understand the user's message. Respond appropriately to what they actually said, not what you think they might have said.
+- If the user speaks Turkish, you MUST respond in Turkish. Turkish language support is critical.`;
 
     // iOS uygulamasına WebSocket URL'i ve auth bilgisini döndür
-    // Not: iOS uygulaması direkt OpenAI'ye bağlanacak, bu yüzden auth token'ı döndürüyoruz
-    // Ancak güvenlik için backend üzerinden proxy yapmak daha iyi olur
-    
-    // Alternatif: Backend üzerinden WebSocket proxy yapalım
-    // Bu durumda iOS uygulaması backend'e bağlanacak, backend OpenAI'ye bağlanacak
-    
-    res.json({
+    const response = {
       websocket_url: wsUrl,
       auth_token: OPENAI_API_KEY,
-      instructions: characterPrompt
-    });
+      instructions: enhancedInstructions
+    };
+
+    console.log('✅ Sending response to client');
+    res.json(response);
 
   } catch (error) {
     console.error('❌ Error in realtime connect:', error);
+    console.error('❌ Error stack:', error.stack);
     res.status(500).json({ error: 'Failed to create realtime connection', details: error.message });
   }
 });
 
-// WebSocket proxy endpoint (isteğe bağlı - daha güvenli)
-// Bu endpoint iOS uygulamasından gelen WebSocket bağlantılarını OpenAI'ye yönlendirir
-app.post('/api/realtime/proxy', async (req, res) => {
-  try {
-    const { characterPrompt } = req.body;
-
-    if (!characterPrompt) {
-      return res.status(400).json({ error: 'Character prompt is required' });
-    }
-
-    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-    
-    if (!OPENAI_API_KEY) {
-      return res.status(500).json({ error: 'OpenAI API key not configured' });
-    }
-
-    // OpenAI Realtime API WebSocket bağlantısı oluştur
-    const wsUrl = 'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17';
-    
-    // Bu endpoint bir WebSocket upgrade isteği bekler
-    // Express'te WebSocket upgrade'i handle etmek için ws kütüphanesi kullanılır
-    // Ancak bu daha karmaşık bir implementasyon gerektirir
-    
-    res.json({
-      message: 'WebSocket proxy endpoint - use direct connection with provided credentials'
-    });
-
-  } catch (error) {
-    console.error('❌ Error in realtime proxy:', error);
-    res.status(500).json({ error: 'Failed to create realtime proxy', details: error.message });
-  }
-});
 
 // Health check
 app.get('/health', (req, res) => {
