@@ -90,52 +90,69 @@ app.post('/api/chat', async (req, res) => {
 
     console.log('🤖 Calling Replicate API...');
     
-    // Replicate'te OpenAI modeli yok, meta/llama-3.1-8b-instruct kullan
-    const output = await replicate.run(
-      "meta/llama-3.1-8b-instruct",
-      {
-        input: {
-          prompt: `${systemPrompt}\n\nUser: ${message}\n\nAssistant:`,
-          max_tokens: 500,
-          temperature: 0.7,
-          top_p: 0.9
-        }
-      }
-    );
-
-    console.log('📤 Replicate output type:', typeof output);
-    console.log('📤 Replicate output:', JSON.stringify(output).substring(0, 200));
-
-    // Replicate output'u işle
     let response = '';
-    if (typeof output === 'string') {
-      response = output;
-    } else if (Array.isArray(output)) {
-      response = output.join(' ');
-    } else if (output && typeof output === 'object') {
-      // Stream response olabilir
-      if (output.text) {
-        response = output.text;
-      } else if (output.response) {
-        response = output.response;
-      } else {
-        // Tüm string değerleri birleştir
-        const parts = [];
-        for (const key in output) {
-          if (typeof output[key] === 'string') {
-            parts.push(output[key]);
+    
+    try {
+      // Daha basit bir model kullan - meta/llama-3-8b-instruct
+      const fullPrompt = `${systemPrompt}\n\nUser: ${message}\n\nAssistant:`;
+      
+      console.log('📝 Full prompt length:', fullPrompt.length);
+      
+      const output = await replicate.run(
+        "meta/llama-3-8b-instruct",
+        {
+          input: {
+            prompt: fullPrompt,
+            max_tokens: 500,
+            temperature: 0.7,
+            top_p: 0.9
           }
         }
-        response = parts.join(' ') || JSON.stringify(output);
-      }
-    } else {
-      response = String(output);
-    }
+      );
 
-    // Response'u temizle (eğer system prompt içeriyorsa)
-    response = response.replace(/User:.*?Assistant:/s, '').trim();
-    if (!response) {
-      response = "I'm here, how can I help you?";
+      console.log('📤 Replicate output type:', typeof output);
+      console.log('📤 Replicate output is array:', Array.isArray(output));
+      
+      // Replicate output'u işle
+      if (typeof output === 'string') {
+        response = output;
+      } else if (Array.isArray(output)) {
+        // Array ise tüm string'leri birleştir
+        response = output.filter(item => typeof item === 'string').join('').trim();
+      } else if (output && typeof output === 'object') {
+        // Object ise text veya response field'ını ara
+        response = output.text || output.response || output.output || JSON.stringify(output);
+      } else {
+        response = String(output);
+      }
+
+      // Response'u temizle
+      response = response
+        .replace(/User:.*?Assistant:/s, '')
+        .replace(/Assistant:/g, '')
+        .trim();
+        
+      if (!response || response.length < 3) {
+        response = "I'm here, how can I help you?";
+      }
+      
+      console.log('✅ Response generated:', response.substring(0, 100) + '...');
+      
+    } catch (replicateError) {
+      console.error('❌ Replicate API Error:', replicateError);
+      console.error('❌ Error message:', replicateError.message);
+      console.error('❌ Error stack:', replicateError.stack);
+      
+      // Daha detaylı hata mesajı
+      if (replicateError.message) {
+        console.error('❌ Full error:', JSON.stringify(replicateError, null, 2));
+      }
+      
+      // Fallback: Basit bir response döndür
+      response = `I understand you said "${message.substring(0, 50)}...". Let me respond naturally based on my character.`;
+      
+      // Hata fırlatma, sadece logla ve fallback response kullan
+      console.log('⚠️ Using fallback response due to error');
     }
 
     console.log('✅ Final response:', response.substring(0, 100) + '...');
