@@ -289,33 +289,28 @@ app.post('/api/generate-photo', async (req, res) => {
     console.log('📸 Photo prompt:', photoPrompt);
     console.log('📸 Has profile image for face consistency:', !!profileImageBase64);
 
-    // Stable Diffusion 3.5 Large input parametreleri (img2img için)
+    // Stable Diffusion 3.5 Large input parametreleri
+    // Önce basit parametrelerle başlayalım
     const sdInput = {
       prompt: photoPrompt,
-      aspect_ratio: "3:4", // Portrait format (profil fotoğrafı gibi)
-      output_format: "png",
-      output_quality: 90
+      // Not: Stable Diffusion 3.5 Large'nin tam parametrelerini kontrol et
+      // aspect_ratio ve output_format bazı modellerde desteklenmeyebilir
     };
 
     // Eğer profil fotoğrafı varsa, image-to-image için kullan
     if (profileImageBase64) {
       try {
         // Base64'ü data URL formatına çevir
-        // Replicate API genellikle data URL formatını kabul eder
         const imageDataUrl = `data:image/jpeg;base64,${profileImageBase64}`;
         
         // Stable Diffusion 3.5 Large için img2img parametreleri
         // Replicate API'de genellikle 'image' veya 'init_image' parametresi kullanılır
-        sdInput.image = imageDataUrl; // Önce 'image' dene
-        // Alternatif: sdInput.init_image = imageDataUrl;
+        // Önce 'image' dene, çalışmazsa 'init_image' dene
+        sdInput.image = imageDataUrl;
         
         // Strength: 0.0-1.0 arası, ne kadar orijinal görselden etkileneceği
         // 0.3-0.5 arası yüz tutarlılığı için ideal
-        // 0.3 = daha az etki (yeni poz/arka plan), 0.5 = daha fazla etki (yüzü daha çok korur)
         sdInput.strength = 0.4; // Yüzü korurken yeni poz/arka plana izin verir
-        
-        // Denoising strength (bazı modellerde farklı isimle olabilir)
-        // sdInput.denoising_strength = 0.4;
         
         console.log('📸 Using profile image for face consistency (img2img)');
         console.log('📸 Image size:', Buffer.from(profileImageBase64, 'base64').length, 'bytes');
@@ -326,7 +321,8 @@ app.post('/api/generate-photo', async (req, res) => {
       }
     }
 
-    console.log('📸 Stable Diffusion input:', JSON.stringify({ ...sdInput, image: sdInput.image ? '[image data]' : undefined }, null, 2));
+    console.log('📸 Stable Diffusion input keys:', Object.keys(sdInput));
+    console.log('📸 Stable Diffusion input (without image data):', JSON.stringify({ ...sdInput, image: sdInput.image ? '[image data]' : undefined }, null, 2));
 
     // Replicate API ile fotoğraf oluştur (Stable Diffusion 3.5 Large - img2img destekli)
     console.log('📸 Calling Replicate API with Stable Diffusion 3.5 Large...');
@@ -350,7 +346,21 @@ app.post('/api/generate-photo', async (req, res) => {
       console.error('❌ Replicate API error:', error);
       console.error('❌ Error message:', error.message);
       console.error('❌ Error stack:', error.stack);
-      throw error; // Hata durumunda yukarı fırlat
+      
+      // Daha detaylı hata bilgisi
+      if (error.response) {
+        console.error('❌ Error response:', error.response);
+      }
+      if (error.request) {
+        console.error('❌ Error request:', error.request);
+      }
+      
+      // Hata mesajını kullanıcıya döndür
+      return res.status(500).json({ 
+        error: 'Failed to generate photo',
+        details: error.message || 'Unknown error',
+        model: 'stability-ai/stable-diffusion-3.5-large'
+      });
     }
 
     // Replicate output formatı: ["https://..."] veya string
