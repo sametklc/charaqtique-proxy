@@ -222,9 +222,11 @@ app.post('/api/generate-photo', async (req, res) => {
   try {
     const { characterId, description, characterName, characterTraits, profileImageBase64 } = req.body;
 
-    console.log('📸 Photo generation request received');
+    console.log('📸 ========== Photo generation request received ==========');
     console.log('📸 Character:', characterName);
     console.log('📸 Description:', description);
+    console.log('📸 Character ID:', characterId);
+    console.log('📸 Has profile image:', !!profileImageBase64);
     console.log('📸 Character traits:', JSON.stringify(characterTraits));
 
     if (!description) {
@@ -326,6 +328,8 @@ app.post('/api/generate-photo', async (req, res) => {
 
     // Replicate API ile fotoğraf oluştur (Stable Diffusion 3.5 Large - img2img destekli)
     console.log('📸 Calling Replicate API with Stable Diffusion 3.5 Large...');
+    console.log('📸 Input parameters:', JSON.stringify({ ...sdInput, image: sdInput.image ? '[image data]' : undefined }, null, 2));
+    
     let output;
     try {
       output = await Promise.race([
@@ -336,23 +340,27 @@ app.post('/api/generate-photo', async (req, res) => {
           }
         ),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Photo generation timeout')), REPLICATE_TIMEOUT * 2) // Fotoğraf üretimi daha uzun sürebilir
+          setTimeout(() => reject(new Error('Photo generation timeout')), REPLICATE_TIMEOUT * 3) // Fotoğraf üretimi daha uzun sürebilir (3x timeout)
         )
       ]);
-      console.log('📸 Replicate API response received');
+      console.log('✅ Replicate API response received');
       console.log('📸 Output type:', typeof output);
-      console.log('📸 Output:', JSON.stringify(output).substring(0, 200));
+      console.log('📸 Output (first 500 chars):', JSON.stringify(output).substring(0, 500));
     } catch (error) {
-      console.error('❌ Replicate API error:', error);
+      console.error('❌ ========== Replicate API error ==========');
       console.error('❌ Error message:', error.message);
+      console.error('❌ Error name:', error.name);
       console.error('❌ Error stack:', error.stack);
       
       // Daha detaylı hata bilgisi
       if (error.response) {
-        console.error('❌ Error response:', error.response);
+        console.error('❌ Error response:', JSON.stringify(error.response, null, 2));
       }
       if (error.request) {
         console.error('❌ Error request:', error.request);
+      }
+      if (error.body) {
+        console.error('❌ Error body:', JSON.stringify(error.body, null, 2));
       }
       
       // Hata mesajını kullanıcıya döndür
