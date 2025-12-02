@@ -309,16 +309,18 @@ app.post('/api/generate-photo', async (req, res) => {
     // Karakterin görünümünü koruyarak istenen fotoğrafı üret
     // Kullanıcının isteğine öncelik ver, karakterin görünümünü koru
     // Portrait zorlaması yapma - kullanıcı ne istiyorsa onu üret
-    const photoPrompt = `${description}, ${characterName}, ${physicalDesc}, ${eyeDesc}, ${bodyDesc}, ${appearanceDesc.toLowerCase()} fashion style, high quality, detailed, photorealistic`;
+    // Kullanıcının description'ını ön plana çıkar, karakter özelliklerini arka plana al
+    const photoPrompt = `${description}, ${characterName} (${physicalDesc}, ${eyeDesc}, ${bodyDesc}), ${appearanceDesc.toLowerCase()} fashion style, high quality, detailed, photorealistic`;
 
     console.log('📸 Photo prompt:', photoPrompt);
     console.log('📸 Has profile image for face consistency:', !!profileImageBase64);
 
     // Flux Schnell input parametreleri
+    // Aspect ratio'yu daha geniş yap (portre zorlamasını azaltmak için)
     const fluxInput = {
       prompt: photoPrompt,
       // Flux Schnell parametreleri
-      aspect_ratio: "1:1", // Kare format (değiştirilebilir)
+      aspect_ratio: "16:9", // Geniş format (full body, action shots için daha uygun)
       output_format: "jpg"
     };
 
@@ -341,12 +343,13 @@ app.post('/api/generate-photo', async (req, res) => {
           fluxInput.image = imageDataUrl;
           
           // Strength: 0.0-1.0 arası, ne kadar orijinal görselden etkileneceği
-          // 0.3-0.5 arası yüz tutarlılığı için ideal
-          fluxInput.strength = 0.4; // Yüzü korurken yeni poz/arka plana izin verir
+          // Daha düşük strength (0.2-0.3) yüzü korurken daha fazla yeni sahne/poz yaratır
+          // 0.4 çok yüksek, portre zorlayabilir
+          fluxInput.strength = 0.25; // Düşük strength - yüzü korur ama yeni sahneye izin verir
           
           console.log('📸 Using profile image for face consistency (img2img)');
           console.log('📸 Image size:', Buffer.from(profileImageBase64, 'base64').length, 'bytes');
-          console.log('📸 Strength:', fluxInput.strength);
+          console.log('📸 Strength:', fluxInput.strength, '(lower for more scene flexibility)');
         }
       } catch (error) {
         console.error('❌ Error processing profile image:', error);
