@@ -9,7 +9,8 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Fotoğraf base64 için daha büyük limit
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Replicate client
 const replicate = new Replicate({
@@ -22,9 +23,19 @@ const supabaseKey = process.env.SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
   console.error('❌ SUPABASE_URL and SUPABASE_ANON_KEY must be set in environment variables');
+  console.error('📝 SUPABASE_URL format: https://xxxxx.supabase.co');
+  console.error('📝 SUPABASE_ANON_KEY: anon public key from Supabase Dashboard > Settings > API');
 }
 
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+
+// Supabase bağlantısını test et
+if (supabase) {
+  console.log('✅ Supabase client initialized');
+  console.log(`📡 Supabase URL: ${supabaseUrl}`);
+} else {
+  console.warn('⚠️ Supabase not configured - data will not persist');
+}
 
 // Replicate API timeout ayarı
 const REPLICATE_TIMEOUT = 60000; // 60 saniye
@@ -313,21 +324,30 @@ app.post('/api/generate-photo', async (req, res) => {
     // Eğer profil fotoğrafı varsa, image-to-image için kullan
     if (profileImageBase64) {
       try {
-        // Base64'ü data URL formatına çevir
-        const imageDataUrl = `data:image/jpeg;base64,${profileImageBase64}`;
+        // Base64 string'in uzunluğunu kontrol et
+        const base64Length = profileImageBase64.length;
+        console.log('📸 Base64 image length:', base64Length, 'characters');
         
-        // Stable Diffusion 3.5 Large için img2img parametreleri
-        // Replicate API'de genellikle 'image' veya 'init_image' parametresi kullanılır
-        // Önce 'image' dene, çalışmazsa 'init_image' dene
-        sdInput.image = imageDataUrl;
-        
-        // Strength: 0.0-1.0 arası, ne kadar orijinal görselden etkileneceği
-        // 0.3-0.5 arası yüz tutarlılığı için ideal
-        sdInput.strength = 0.4; // Yüzü korurken yeni poz/arka plana izin verir
-        
-        console.log('📸 Using profile image for face consistency (img2img)');
-        console.log('📸 Image size:', Buffer.from(profileImageBase64, 'base64').length, 'bytes');
-        console.log('📸 Strength:', sdInput.strength);
+        // Eğer çok büyükse (5MB'den fazla), kullanma
+        if (base64Length > 5 * 1024 * 1024) {
+          console.warn('⚠️ Base64 image too large, skipping img2img');
+        } else {
+          // Base64'ü data URL formatına çevir
+          const imageDataUrl = `data:image/jpeg;base64,${profileImageBase64}`;
+          
+          // Stable Diffusion 3.5 Large için img2img parametreleri
+          // Replicate API'de genellikle 'image' veya 'init_image' parametresi kullanılır
+          // Önce 'image' dene, çalışmazsa 'init_image' dene
+          sdInput.image = imageDataUrl;
+          
+          // Strength: 0.0-1.0 arası, ne kadar orijinal görselden etkileneceği
+          // 0.3-0.5 arası yüz tutarlılığı için ideal
+          sdInput.strength = 0.4; // Yüzü korurken yeni poz/arka plana izin verir
+          
+          console.log('📸 Using profile image for face consistency (img2img)');
+          console.log('📸 Image size:', Buffer.from(profileImageBase64, 'base64').length, 'bytes');
+          console.log('📸 Strength:', sdInput.strength);
+        }
       } catch (error) {
         console.error('❌ Error processing profile image:', error);
         // Hata olsa bile devam et, sadece profil fotoğrafı olmadan üret
@@ -529,16 +549,24 @@ app.post('/api/save-characters', async (req, res) => {
       .eq('user_id', userId);
 
     // Yeni karakterleri ekle
-    const charactersToInsert = characters.map(char => ({
-      user_id: userId,
-      character_id: char.id,
-      name: char.name,
-      profile_image_url: char.profileImageURL || null,
-      full_body_image_url: char.fullBodyImageURL || null,
-      created_at: char.createdAt,
-      is_user_created: char.isUserCreated || true,
-      character_traits: char.characterTraits
-    }));
+    const charactersToInsert = characters.map(char => {
+      // characterTraits'i JSONB formatına çevir
+      let traits = char.characterTraits;
+      if (typeof traits !== 'object') {
+        traits = {};
+      }
+      
+      return {
+        user_id: userId,
+        character_id: char.id,
+        name: char.name,
+        profile_image_url: char.profileImageURL || null,
+        full_body_image_url: char.fullBodyImageURL || null,
+        created_at: char.createdAt,
+        is_user_created: char.isUserCreated || true,
+        character_traits: traits
+      };
+    });
 
     const { data, error } = await supabase
       .from('characters')
@@ -582,15 +610,28 @@ app.get('/api/load-characters', async (req, res) => {
     }
 
     // Supabase'den gelen verileri iOS formatına çevir
-    const characters = (data || []).map(row => ({
-      id: row.character_id,
-      name: row.name,
-      profileImageURL: row.profile_image_url,
-      fullBodyImageURL: row.full_body_image_url,
-      createdAt: row.created_at,
-      isUserCreated: row.is_user_created,
-      characterTraits: row.character_traits
-    }));
+    const characters = (data || []).map(row => {
+      // character_traits JSONB'den parse et
+      let traits = row.character_traits;
+      if (typeof traits === 'string') {
+        try {
+          traits = JSON.parse(traits);
+        } catch (e) {
+          console.error('❌ Failed to parse character_traits:', e);
+          traits = {};
+        }
+      }
+      
+      return {
+        id: row.character_id,
+        name: row.name,
+        profileImageURL: row.profile_image_url,
+        fullBodyImageURL: row.full_body_image_url,
+        createdAt: row.created_at,
+        isUserCreated: row.is_user_created,
+        characterTraits: traits
+      };
+    });
 
     console.log(`✅ Loaded ${characters.length} characters for user ${userId}`);
     res.json({ success: true, characters });
