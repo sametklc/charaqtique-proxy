@@ -315,11 +315,11 @@ app.post('/api/generate-photo', async (req, res) => {
     console.log('📸 Photo prompt:', photoPrompt);
     console.log('📸 Has profile image for face consistency:', !!profileImageBase64);
 
-    // Flux Schnell input parametreleri
+    // Flux 1.1 Pro input parametreleri
     // Aspect ratio'yu daha geniş yap (portre zorlamasını azaltmak için)
     const fluxInput = {
       prompt: photoPrompt,
-      // Flux Schnell parametreleri
+      // Flux 1.1 Pro parametreleri
       aspect_ratio: "16:9", // Geniş format (full body, action shots için daha uygun)
       output_format: "jpg"
     };
@@ -338,8 +338,8 @@ app.post('/api/generate-photo', async (req, res) => {
           // Base64'ü data URL formatına çevir
           const imageDataUrl = `data:image/jpeg;base64,${profileImageBase64}`;
           
-          // Flux Schnell için img2img parametreleri
-          // Flux modelleri genellikle 'image' parametresi kullanır
+          // Flux 1.1 Pro için img2img parametreleri
+          // Flux 1.1 Pro 'image' parametresi kullanır
           fluxInput.image = imageDataUrl;
           
           // Strength: 0.0-1.0 arası, ne kadar orijinal görselden etkileneceği
@@ -347,7 +347,7 @@ app.post('/api/generate-photo', async (req, res) => {
           // 0.4 çok yüksek, portre zorlayabilir
           fluxInput.strength = 0.25; // Düşük strength - yüzü korur ama yeni sahneye izin verir
           
-          console.log('📸 Using profile image for face consistency (img2img)');
+          console.log('📸 Using profile image for face consistency (img2img with Flux 1.1 Pro)');
           console.log('📸 Image size:', Buffer.from(profileImageBase64, 'base64').length, 'bytes');
           console.log('📸 Strength:', fluxInput.strength, '(lower for more scene flexibility)');
         }
@@ -357,18 +357,18 @@ app.post('/api/generate-photo', async (req, res) => {
       }
     }
 
-    console.log('📸 Flux Schnell input keys:', Object.keys(fluxInput));
-    console.log('📸 Flux Schnell input (without image data):', JSON.stringify({ ...fluxInput, image: fluxInput.image ? '[image data]' : undefined }, null, 2));
+    console.log('📸 Flux 1.1 Pro input keys:', Object.keys(fluxInput));
+    console.log('📸 Flux 1.1 Pro input (without image data):', JSON.stringify({ ...fluxInput, image: fluxInput.image ? '[image data]' : undefined }, null, 2));
 
-    // Replicate API ile fotoğraf oluştur (Flux Schnell - img2img destekli)
-    console.log('📸 Calling Replicate API with Flux Schnell...');
+    // Replicate API ile fotoğraf oluştur (Flux 1.1 Pro - img2img destekli)
+    console.log('📸 Calling Replicate API with Flux 1.1 Pro...');
     console.log('📸 Input parameters:', JSON.stringify({ ...fluxInput, image: fluxInput.image ? '[image data]' : undefined }, null, 2));
     
     let output;
     try {
       output = await Promise.race([
         replicate.run(
-          "black-forest-labs/flux-schnell",
+          "black-forest-labs/flux-1.1-pro",
           {
             input: fluxInput
           }
@@ -401,7 +401,7 @@ app.post('/api/generate-photo', async (req, res) => {
       return res.status(500).json({ 
         error: 'Failed to generate photo',
         details: error.message || 'Unknown error',
-        model: 'black-forest-labs/flux-schnell'
+        model: 'black-forest-labs/flux-1.1-pro'
       });
     }
 
