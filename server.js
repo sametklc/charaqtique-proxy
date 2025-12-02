@@ -313,12 +313,12 @@ app.post('/api/generate-photo', async (req, res) => {
     console.log('📸 Photo prompt:', photoPrompt);
     console.log('📸 Has profile image for face consistency:', !!profileImageBase64);
 
-    // Stable Diffusion 3.5 Large input parametreleri
-    // Önce basit parametrelerle başlayalım
-    const sdInput = {
+    // Flux Schnell input parametreleri
+    const fluxInput = {
       prompt: photoPrompt,
-      // Not: Stable Diffusion 3.5 Large'nin tam parametrelerini kontrol et
-      // aspect_ratio ve output_format bazı modellerde desteklenmeyebilir
+      // Flux Schnell parametreleri
+      aspect_ratio: "1:1", // Kare format (değiştirilebilir)
+      output_format: "jpg"
     };
 
     // Eğer profil fotoğrafı varsa, image-to-image için kullan
@@ -335,18 +335,17 @@ app.post('/api/generate-photo', async (req, res) => {
           // Base64'ü data URL formatına çevir
           const imageDataUrl = `data:image/jpeg;base64,${profileImageBase64}`;
           
-          // Stable Diffusion 3.5 Large için img2img parametreleri
-          // Replicate API'de genellikle 'image' veya 'init_image' parametresi kullanılır
-          // Önce 'image' dene, çalışmazsa 'init_image' dene
-          sdInput.image = imageDataUrl;
+          // Flux Schnell için img2img parametreleri
+          // Flux modelleri genellikle 'image' parametresi kullanır
+          fluxInput.image = imageDataUrl;
           
           // Strength: 0.0-1.0 arası, ne kadar orijinal görselden etkileneceği
           // 0.3-0.5 arası yüz tutarlılığı için ideal
-          sdInput.strength = 0.4; // Yüzü korurken yeni poz/arka plana izin verir
+          fluxInput.strength = 0.4; // Yüzü korurken yeni poz/arka plana izin verir
           
           console.log('📸 Using profile image for face consistency (img2img)');
           console.log('📸 Image size:', Buffer.from(profileImageBase64, 'base64').length, 'bytes');
-          console.log('📸 Strength:', sdInput.strength);
+          console.log('📸 Strength:', fluxInput.strength);
         }
       } catch (error) {
         console.error('❌ Error processing profile image:', error);
@@ -354,20 +353,20 @@ app.post('/api/generate-photo', async (req, res) => {
       }
     }
 
-    console.log('📸 Stable Diffusion input keys:', Object.keys(sdInput));
-    console.log('📸 Stable Diffusion input (without image data):', JSON.stringify({ ...sdInput, image: sdInput.image ? '[image data]' : undefined }, null, 2));
+    console.log('📸 Flux Schnell input keys:', Object.keys(fluxInput));
+    console.log('📸 Flux Schnell input (without image data):', JSON.stringify({ ...fluxInput, image: fluxInput.image ? '[image data]' : undefined }, null, 2));
 
-    // Replicate API ile fotoğraf oluştur (Stable Diffusion 3.5 Large - img2img destekli)
-    console.log('📸 Calling Replicate API with Stable Diffusion 3.5 Large...');
-    console.log('📸 Input parameters:', JSON.stringify({ ...sdInput, image: sdInput.image ? '[image data]' : undefined }, null, 2));
+    // Replicate API ile fotoğraf oluştur (Flux Schnell - img2img destekli)
+    console.log('📸 Calling Replicate API with Flux Schnell...');
+    console.log('📸 Input parameters:', JSON.stringify({ ...fluxInput, image: fluxInput.image ? '[image data]' : undefined }, null, 2));
     
     let output;
     try {
       output = await Promise.race([
         replicate.run(
-          "stability-ai/stable-diffusion-3.5-large",
+          "black-forest-labs/flux-schnell",
           {
-            input: sdInput
+            input: fluxInput
           }
         ),
         new Promise((_, reject) => 
@@ -398,7 +397,7 @@ app.post('/api/generate-photo', async (req, res) => {
       return res.status(500).json({ 
         error: 'Failed to generate photo',
         details: error.message || 'Unknown error',
-        model: 'stability-ai/stable-diffusion-3.5-large'
+        model: 'black-forest-labs/flux-schnell'
       });
     }
 
