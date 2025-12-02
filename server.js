@@ -289,70 +289,108 @@ app.post('/api/generate-photo', async (req, res) => {
     console.log('📸 Photo prompt:', photoPrompt);
     console.log('📸 Has profile image for face consistency:', !!profileImageBase64);
 
-    // Flux input parametreleri
-    const fluxInput = {
+    // Stable Diffusion 3.5 Large input parametreleri (img2img için)
+    const sdInput = {
       prompt: photoPrompt,
       aspect_ratio: "3:4", // Portrait format (profil fotoğrafı gibi)
       output_format: "png",
       output_quality: 90
     };
 
-    // Eğer profil fotoğrafı varsa, yüz tutarlılığı için kullan
-    // Not: Flux-1.1-pro'da img2img için farklı parametreler gerekebilir
-    // Alternatif: IP-Adapter veya face consistency için özel modeller
+    // Eğer profil fotoğrafı varsa, image-to-image için kullan
     if (profileImageBase64) {
       try {
-        // Base64'ü buffer'a çevir ve Replicate'e gönder
-        // Flux-1.1-pro'da image parametresi img2img için kullanılabilir
-        const imageBuffer = Buffer.from(profileImageBase64, 'base64');
+        // Base64'ü data URL formatına çevir
+        // Replicate API genellikle data URL formatını kabul eder
+        const imageDataUrl = `data:image/jpeg;base64,${profileImageBase64}`;
         
-        // Replicate'e base64 string olarak gönder (bazı modeller data URL formatını kabul eder)
-        // Veya doğrudan buffer gönderebiliriz
-        fluxInput.image = `data:image/jpeg;base64,${profileImageBase64}`;
+        // Stable Diffusion 3.5 Large için img2img parametreleri
+        // Replicate API'de genellikle 'image' veya 'init_image' parametresi kullanılır
+        sdInput.image = imageDataUrl; // Önce 'image' dene
+        // Alternatif: sdInput.init_image = imageDataUrl;
         
-        // Strength parametresi varsa ekle (img2img için)
-        // Not: Flux-1.1-pro'nun API'sine göre bu parametre farklı olabilir
-        fluxInput.strength = 0.4; // Yüzü korurken yeni poz/arka plana izin verir
+        // Strength: 0.0-1.0 arası, ne kadar orijinal görselden etkileneceği
+        // 0.3-0.5 arası yüz tutarlılığı için ideal
+        // 0.3 = daha az etki (yeni poz/arka plan), 0.5 = daha fazla etki (yüzü daha çok korur)
+        sdInput.strength = 0.4; // Yüzü korurken yeni poz/arka plana izin verir
         
-        console.log('📸 Using profile image for face consistency (strength: 0.4)');
-        console.log('📸 Image size:', imageBuffer.length, 'bytes');
+        // Denoising strength (bazı modellerde farklı isimle olabilir)
+        // sdInput.denoising_strength = 0.4;
+        
+        console.log('📸 Using profile image for face consistency (img2img)');
+        console.log('📸 Image size:', Buffer.from(profileImageBase64, 'base64').length, 'bytes');
+        console.log('📸 Strength:', sdInput.strength);
       } catch (error) {
         console.error('❌ Error processing profile image:', error);
         // Hata olsa bile devam et, sadece profil fotoğrafı olmadan üret
       }
     }
 
-    // Replicate API ile fotoğraf oluştur
-    const output = await Promise.race([
-      replicate.run(
-        "black-forest-labs/flux-1.1-pro",
-        {
-          input: fluxInput
-        }
-      ),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Photo generation timeout')), REPLICATE_TIMEOUT * 2) // Fotoğraf üretimi daha uzun sürebilir
-      )
-    ]);
+    console.log('📸 Stable Diffusion input:', JSON.stringify({ ...sdInput, image: sdInput.image ? '[image data]' : undefined }, null, 2));
 
-    // Replicate output formatı: ["https://..."]
+    // Replicate API ile fotoğraf oluştur (Stable Diffusion 3.5 Large - img2img destekli)
+    console.log('📸 Calling Replicate API with Stable Diffusion 3.5 Large...');
+    let output;
+    try {
+      output = await Promise.race([
+        replicate.run(
+          "stability-ai/stable-diffusion-3.5-large",
+          {
+            input: sdInput
+          }
+        ),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Photo generation timeout')), REPLICATE_TIMEOUT * 2) // Fotoğraf üretimi daha uzun sürebilir
+        )
+      ]);
+      console.log('📸 Replicate API response received');
+      console.log('📸 Output type:', typeof output);
+      console.log('📸 Output:', JSON.stringify(output).substring(0, 200));
+    } catch (error) {
+      console.error('❌ Replicate API error:', error);
+      console.error('❌ Error message:', error.message);
+      console.error('❌ Error stack:', error.stack);
+      throw error; // Hata durumunda yukarı fırlat
+    }
+
+    // Replicate output formatı: ["https://..."] veya string
+    console.log('📸 Processing output...');
     let imageURL;
+    
     if (Array.isArray(output)) {
       imageURL = output[0];
+      console.log('📸 Output is array, first element:', imageURL);
     } else if (typeof output === 'string') {
       imageURL = output;
+      console.log('📸 Output is string:', imageURL);
     } else if (output && typeof output === 'object') {
       // Bazen output bir obje olabilir
-      imageURL = output.url || output[0] || null;
+      imageURL = output.url || output.image || output[0] || null;
+      console.log('📸 Output is object, extracted URL:', imageURL);
+      console.log('📸 Object keys:', Object.keys(output));
     } else {
       imageURL = null;
+      console.error('❌ Unknown output format');
     }
 
     if (!imageURL) {
       console.error('❌ No image URL in output');
       console.error('❌ Output type:', typeof output);
-      console.error('❌ Output value:', JSON.stringify(output));
-      return res.status(500).json({ error: 'Failed to generate photo - no image URL in response' });
+      console.error('❌ Output value:', JSON.stringify(output, null, 2));
+      return res.status(500).json({ 
+        error: 'Failed to generate photo - no image URL in response',
+        outputType: typeof output,
+        output: output
+      });
+    }
+    
+    // URL'in geçerli olup olmadığını kontrol et
+    if (!imageURL.startsWith('http://') && !imageURL.startsWith('https://')) {
+      console.error('❌ Invalid image URL format:', imageURL);
+      return res.status(500).json({ 
+        error: 'Failed to generate photo - invalid image URL format',
+        imageURL: imageURL
+      });
     }
 
     console.log('✅ Photo generated:', imageURL);
