@@ -310,7 +310,21 @@ app.post('/api/generate-photo', async (req, res) => {
     // Kullanıcının isteğine öncelik ver, karakterin görünümünü koru
     // Portrait zorlaması yapma - kullanıcı ne istiyorsa onu üret
     // Kullanıcının description'ını ön plana çıkar, karakter özelliklerini arka plana al
-    const photoPrompt = `${description}, ${characterName} (${physicalDesc}, ${eyeDesc}, ${bodyDesc}), ${appearanceDesc.toLowerCase()} fashion style, high quality, detailed, photorealistic`;
+    
+    // Portre isteği kontrolü
+    const descriptionLower = description.toLowerCase();
+    const isPortraitRequest = descriptionLower.includes('portrait') || 
+                              descriptionLower.includes('headshot') || 
+                              descriptionLower.includes('close-up') ||
+                              descriptionLower.includes('closeup') ||
+                              descriptionLower.includes('face only');
+    
+    // Eğer kullanıcı açıkça portre istemiyorsa, portre zorlamasını engelle
+    // Negatif prompt ekle: portrait, close-up, headshot gibi ifadeleri engelle
+    const antiPortraitPrompt = isPortraitRequest ? '' : ', NOT a portrait, NOT a close-up, NOT a headshot, NOT face only, full scene, full body or action scene, wide angle view, environmental context';
+    
+    // Prompt'u oluştur - kullanıcının isteği ön planda
+    const photoPrompt = `${description}${antiPortraitPrompt}, ${characterName} (${physicalDesc}, ${eyeDesc}, ${bodyDesc}), ${appearanceDesc.toLowerCase()} fashion style, high quality, detailed, photorealistic`;
 
     console.log('📸 Photo prompt:', photoPrompt);
     console.log('📸 Has profile image for face consistency:', !!profileImageBase64);
@@ -343,9 +357,10 @@ app.post('/api/generate-photo', async (req, res) => {
           fluxInput.image = imageDataUrl;
           
           // Strength: 0.0-1.0 arası, ne kadar orijinal görselden etkileneceği
-          // Daha düşük strength (0.2-0.3) yüzü korurken daha fazla yeni sahne/poz yaratır
-          // 0.4 çok yüksek, portre zorlayabilir
-          fluxInput.strength = 0.25; // Düşük strength - yüzü korur ama yeni sahneye izin verir
+          // Çok düşük strength (0.15-0.2) yüzü korurken maksimum yeni sahne/poz yaratır
+          // 0.25 bile portre zorlayabilir, daha da düşürelim
+          // Eğer portre istenmiyorsa, strength'i çok düşük tut (sadece yüz tutarlılığı için)
+          fluxInput.strength = isPortraitRequest ? 0.3 : 0.15; // Portre değilse çok düşük strength
           
           console.log('📸 Using profile image for face consistency (img2img with Flux 1.1 Pro)');
           console.log('📸 Image size:', Buffer.from(profileImageBase64, 'base64').length, 'bytes');
