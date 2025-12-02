@@ -2,6 +2,7 @@
 const express = require('express');
 const cors = require('cors');
 const Replicate = require('replicate');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,6 +15,16 @@ app.use(express.json());
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 });
+
+// Supabase client
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error('❌ SUPABASE_URL and SUPABASE_ANON_KEY must be set in environment variables');
+}
+
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 // Replicate API timeout ayarı
 const REPLICATE_TIMEOUT = 60000; // 60 saniye
@@ -493,6 +504,195 @@ CRITICAL RULES FOR VOICE CONVERSATION:
   }
 });
 
+
+// Karakterleri kaydet (Supabase)
+app.post('/api/save-characters', async (req, res) => {
+  try {
+    const { userId, characters } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+
+    if (!characters) {
+      return res.status(400).json({ error: 'characters is required' });
+    }
+
+    if (!supabase) {
+      return res.status(500).json({ error: 'Supabase not configured' });
+    }
+
+    // Önce mevcut karakterleri sil (upsert için)
+    await supabase
+      .from('characters')
+      .delete()
+      .eq('user_id', userId);
+
+    // Yeni karakterleri ekle
+    const charactersToInsert = characters.map(char => ({
+      user_id: userId,
+      character_id: char.id,
+      name: char.name,
+      profile_image_url: char.profileImageURL || null,
+      full_body_image_url: char.fullBodyImageURL || null,
+      created_at: char.createdAt,
+      is_user_created: char.isUserCreated || true,
+      character_traits: char.characterTraits
+    }));
+
+    const { data, error } = await supabase
+      .from('characters')
+      .insert(charactersToInsert);
+
+    if (error) {
+      console.error('❌ Supabase error saving characters:', error);
+      return res.status(500).json({ error: 'Failed to save characters', details: error.message });
+    }
+
+    console.log(`✅ Saved ${characters.length} characters for user ${userId}`);
+    res.json({ success: true, count: characters.length });
+  } catch (error) {
+    console.error('❌ Error saving characters:', error);
+    res.status(500).json({ error: 'Failed to save characters', details: error.message });
+  }
+});
+
+// Karakterleri yükle (Supabase)
+app.get('/api/load-characters', async (req, res) => {
+  try {
+    const { userId } = req.query;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+
+    if (!supabase) {
+      return res.status(500).json({ error: 'Supabase not configured' });
+    }
+
+    const { data, error } = await supabase
+      .from('characters')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('❌ Supabase error loading characters:', error);
+      return res.status(500).json({ error: 'Failed to load characters', details: error.message });
+    }
+
+    // Supabase'den gelen verileri iOS formatına çevir
+    const characters = (data || []).map(row => ({
+      id: row.character_id,
+      name: row.name,
+      profileImageURL: row.profile_image_url,
+      fullBodyImageURL: row.full_body_image_url,
+      createdAt: row.created_at,
+      isUserCreated: row.is_user_created,
+      characterTraits: row.character_traits
+    }));
+
+    console.log(`✅ Loaded ${characters.length} characters for user ${userId}`);
+    res.json({ success: true, characters });
+  } catch (error) {
+    console.error('❌ Error loading characters:', error);
+    res.status(500).json({ error: 'Failed to load characters', details: error.message });
+  }
+});
+
+// Mesajları kaydet (Supabase)
+app.post('/api/save-messages', async (req, res) => {
+  try {
+    const { userId, characterId, messages } = req.body;
+
+    if (!userId || !characterId) {
+      return res.status(400).json({ error: 'userId and characterId are required' });
+    }
+
+    if (!messages) {
+      return res.status(400).json({ error: 'messages is required' });
+    }
+
+    if (!supabase) {
+      return res.status(500).json({ error: 'Supabase not configured' });
+    }
+
+    // Önce mevcut mesajları sil (upsert için)
+    await supabase
+      .from('messages')
+      .delete()
+      .eq('user_id', userId)
+      .eq('character_id', characterId);
+
+    // Yeni mesajları ekle
+    const messagesToInsert = messages.map(msg => ({
+      user_id: userId,
+      character_id: characterId,
+      message_id: msg.id,
+      text: msg.text,
+      is_user: msg.isUser,
+      timestamp: msg.timestamp,
+      image_url: msg.imageURL || null
+    }));
+
+    const { data, error } = await supabase
+      .from('messages')
+      .insert(messagesToInsert);
+
+    if (error) {
+      console.error('❌ Supabase error saving messages:', error);
+      return res.status(500).json({ error: 'Failed to save messages', details: error.message });
+    }
+
+    console.log(`✅ Saved ${messages.length} messages for user ${userId}, character ${characterId}`);
+    res.json({ success: true, count: messages.length });
+  } catch (error) {
+    console.error('❌ Error saving messages:', error);
+    res.status(500).json({ error: 'Failed to save messages', details: error.message });
+  }
+});
+
+// Mesajları yükle (Supabase)
+app.get('/api/load-messages', async (req, res) => {
+  try {
+    const { userId, characterId } = req.query;
+
+    if (!userId || !characterId) {
+      return res.status(400).json({ error: 'userId and characterId are required' });
+    }
+
+    if (!supabase) {
+      return res.status(500).json({ error: 'Supabase not configured' });
+    }
+
+    const { data, error } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('character_id', characterId)
+      .order('timestamp', { ascending: true });
+
+    if (error) {
+      console.error('❌ Supabase error loading messages:', error);
+      return res.status(500).json({ error: 'Failed to load messages', details: error.message });
+    }
+
+    // Supabase'den gelen verileri iOS formatına çevir
+    const messages = (data || []).map(row => ({
+      id: row.message_id,
+      text: row.text,
+      isUser: row.is_user,
+      timestamp: row.timestamp,
+      imageURL: row.image_url
+    }));
+
+    console.log(`✅ Loaded ${messages.length} messages for user ${userId}, character ${characterId}`);
+    res.json({ success: true, messages });
+  } catch (error) {
+    console.error('❌ Error loading messages:', error);
+    res.status(500).json({ error: 'Failed to load messages', details: error.message });
+  }
+});
 
 // Health check
 app.get('/health', (req, res) => {
