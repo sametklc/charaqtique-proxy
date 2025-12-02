@@ -641,6 +641,71 @@ app.get('/api/load-characters', async (req, res) => {
   }
 });
 
+// Karakter fotoğraflarını base64 olarak kaydet (Supabase)
+app.post('/api/save-character-images', async (req, res) => {
+  try {
+    const { userId, characterId, profileImageBase64, fullBodyImageBase64 } = req.body;
+
+    if (!userId || !characterId) {
+      return res.status(400).json({ error: 'userId and characterId are required' });
+    }
+
+    if (!supabase) {
+      return res.status(500).json({ error: 'Supabase not configured' });
+    }
+
+    // Base64 fotoğrafları Supabase'deki characters tablosuna kaydet
+    // profile_image_url ve full_body_image_url alanlarına base64 data URI olarak kaydedeceğiz
+    const profileImageDataURI = profileImageBase64 ? `data:image/jpeg;base64,${profileImageBase64}` : null;
+    const fullBodyImageDataURI = fullBodyImageBase64 ? `data:image/jpeg;base64,${fullBodyImageBase64}` : null;
+
+    // Karakteri bul ve güncelle
+    const { data: existingCharacter, error: fetchError } = await supabase
+      .from('characters')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('character_id', characterId)
+      .single();
+
+    if (fetchError && fetchError.code !== 'PGRST116') { // PGRST116 = not found, bu normal
+      console.error('❌ Supabase error fetching character:', fetchError);
+      return res.status(500).json({ error: 'Failed to fetch character', details: fetchError.message });
+    }
+
+    if (existingCharacter) {
+      // Karakter var, güncelle
+      const updateData = {};
+      if (profileImageBase64) {
+        updateData.profile_image_url = profileImageDataURI;
+      }
+      if (fullBodyImageBase64) {
+        updateData.full_body_image_url = fullBodyImageDataURI;
+      }
+
+      const { error: updateError } = await supabase
+        .from('characters')
+        .update(updateData)
+        .eq('user_id', userId)
+        .eq('character_id', characterId);
+
+      if (updateError) {
+        console.error('❌ Supabase error updating character images:', updateError);
+        return res.status(500).json({ error: 'Failed to update character images', details: updateError.message });
+      }
+
+      console.log(`✅ Updated character images for character ${characterId} and user ${userId}`);
+      res.json({ success: true });
+    } else {
+      // Karakter yok, oluşturulamaz (bu endpoint sadece mevcut karakterler için)
+      console.log(`⚠️ Character ${characterId} not found for user ${userId}, skipping image save`);
+      res.json({ success: true, message: 'Character not found, images not saved' });
+    }
+  } catch (error) {
+    console.error('❌ Error saving character images:', error);
+    res.status(500).json({ error: 'Failed to save character images', details: error.message });
+  }
+});
+
 // Mesajları kaydet (Supabase)
 app.post('/api/save-messages', async (req, res) => {
   try {
@@ -732,6 +797,78 @@ app.get('/api/load-messages', async (req, res) => {
   } catch (error) {
     console.error('❌ Error loading messages:', error);
     res.status(500).json({ error: 'Failed to load messages', details: error.message });
+  }
+});
+
+// Bir karakteri sil (Supabase)
+app.delete('/api/delete-character', async (req, res) => {
+  try {
+    const { userId, characterId } = req.body;
+
+    if (!userId || !characterId) {
+      return res.status(400).json({ error: 'userId and characterId are required' });
+    }
+
+    if (!supabase) {
+      return res.status(500).json({ error: 'Supabase not configured' });
+    }
+
+    // Önce karakterin mesajlarını sil
+    await supabase
+      .from('messages')
+      .delete()
+      .eq('user_id', userId)
+      .eq('character_id', characterId);
+
+    // Sonra karakteri sil
+    const { error } = await supabase
+      .from('characters')
+      .delete()
+      .eq('user_id', userId)
+      .eq('character_id', characterId);
+
+    if (error) {
+      console.error('❌ Supabase error deleting character:', error);
+      return res.status(500).json({ error: 'Failed to delete character', details: error.message });
+    }
+
+    console.log(`✅ Deleted character ${characterId} and its messages for user ${userId}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('❌ Error deleting character:', error);
+    res.status(500).json({ error: 'Failed to delete character', details: error.message });
+  }
+});
+
+// Bir karakterin mesajlarını sil (Supabase)
+app.delete('/api/delete-messages', async (req, res) => {
+  try {
+    const { userId, characterId } = req.body;
+
+    if (!userId || !characterId) {
+      return res.status(400).json({ error: 'userId and characterId are required' });
+    }
+
+    if (!supabase) {
+      return res.status(500).json({ error: 'Supabase not configured' });
+    }
+
+    const { error } = await supabase
+      .from('messages')
+      .delete()
+      .eq('user_id', userId)
+      .eq('character_id', characterId);
+
+    if (error) {
+      console.error('❌ Supabase error deleting messages:', error);
+      return res.status(500).json({ error: 'Failed to delete messages', details: error.message });
+    }
+
+    console.log(`✅ Deleted messages for character ${characterId} and user ${userId}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('❌ Error deleting messages:', error);
+    res.status(500).json({ error: 'Failed to delete messages', details: error.message });
   }
 });
 
