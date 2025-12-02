@@ -307,8 +307,9 @@ app.post('/api/generate-photo', async (req, res) => {
     const appearanceDesc = getAppearanceDescription(characterTraits?.appearance || '');
 
     // Karakterin görünümünü koruyarak istenen fotoğrafı üret
-    // Önce karakterin temel görünümü, sonra kullanıcının isteği
-    const photoPrompt = `${characterName}, ${physicalDesc}, ${eyeDesc}, ${bodyDesc}, ${appearanceDesc.toLowerCase()} fashion style, ${description}, professional photography, high quality, detailed, photorealistic`;
+    // Kullanıcının isteğine öncelik ver, karakterin görünümünü koru
+    // Portrait zorlaması yapma - kullanıcı ne istiyorsa onu üret
+    const photoPrompt = `${description}, ${characterName}, ${physicalDesc}, ${eyeDesc}, ${bodyDesc}, ${appearanceDesc.toLowerCase()} fashion style, high quality, detailed, photorealistic`;
 
     console.log('📸 Photo prompt:', photoPrompt);
     console.log('📸 Has profile image for face consistency:', !!profileImageBase64);
