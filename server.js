@@ -43,32 +43,24 @@ const REPLICATE_TIMEOUT = 60000; // 60 saniye
 // ========== SUPABASE STORAGE HELPER FUNCTIONS ==========
 
 /**
- * Upload Base64 image to Supabase Storage
- * @param {string} base64Data - Base64 string (with or without data URI prefix)
- * @param {string} filePath - Path in bucket (e.g., "avatars/character_id_profile.jpg")
+ * Generic helper to upload buffer to Supabase Storage
+ * @param {Buffer} buffer - Image buffer
+ * @param {string} contentType - MIME type (e.g., 'image/jpeg', 'image/png')
+ * @param {string} filename - Path in bucket (e.g., "avatars/character_id_profile.jpg")
  * @returns {Promise<string|null>} - Public URL or null on error
  */
-async function uploadBase64ToSupabase(base64Data, filePath) {
+async function uploadToSupabase(buffer, contentType, filename) {
   if (!supabase) {
     console.error('❌ Supabase not configured');
     return null;
   }
 
   try {
-    // Remove data URI prefix if present
-    let base64String = base64Data;
-    if (base64String.includes(',')) {
-      base64String = base64String.split(',')[1];
-    }
-
-    // Convert base64 to Buffer
-    const buffer = Buffer.from(base64String, 'base64');
-
     // Upload to Supabase Storage
     const { data, error } = await supabase.storage
       .from('images')
-      .upload(filePath, buffer, {
-        contentType: 'image/jpeg',
+      .upload(filename, buffer, {
+        contentType: contentType,
         upsert: true // Overwrite if exists
       });
 
@@ -80,9 +72,9 @@ async function uploadBase64ToSupabase(base64Data, filePath) {
     // Get public URL
     const { data: urlData } = supabase.storage
       .from('images')
-      .getPublicUrl(filePath);
+      .getPublicUrl(filename);
 
-    console.log(`✅ Uploaded image to Supabase Storage: ${filePath}`);
+    console.log(`✅ Uploaded image to Supabase Storage: ${filename}`);
     console.log(`📸 Public URL: ${urlData.publicUrl}`);
     
     return urlData.publicUrl;
@@ -93,12 +85,37 @@ async function uploadBase64ToSupabase(base64Data, filePath) {
 }
 
 /**
- * Download image from URL and upload to Supabase Storage
- * @param {string} imageUrl - URL of the image to download
- * @param {string} filePath - Path in bucket (e.g., "generated/uuid.jpg")
+ * Upload Base64 image to Supabase Storage
+ * @param {string} base64Data - Base64 string (with or without data URI prefix)
+ * @param {string} filePath - Path in bucket (e.g., "avatars/character_id_profile.jpg")
  * @returns {Promise<string|null>} - Public URL or null on error
  */
-async function uploadUrlToSupabase(imageUrl, filePath) {
+async function uploadBase64ToSupabase(base64Data, filePath) {
+  try {
+    // Remove data URI prefix if present
+    let base64String = base64Data;
+    if (base64String.includes(',')) {
+      base64String = base64String.split(',')[1];
+    }
+
+    // Convert base64 to Buffer
+    const buffer = Buffer.from(base64String, 'base64');
+
+    // Use generic upload function
+    return await uploadToSupabase(buffer, 'image/jpeg', filePath);
+  } catch (error) {
+    console.error('❌ Error processing base64 image:', error);
+    return null;
+  }
+}
+
+/**
+ * Download image from URL and upload to Supabase Storage
+ * @param {string} imageUrl - URL of the image to download
+ * @param {string} filename - Path in bucket (e.g., "generated/uuid.jpg")
+ * @returns {Promise<string|null>} - Public URL or null on error
+ */
+async function uploadUrlToSupabase(imageUrl, filename) {
   if (!supabase) {
     console.error('❌ Supabase not configured');
     return null;
@@ -108,7 +125,6 @@ async function uploadUrlToSupabase(imageUrl, filePath) {
     // Download image from URL using https/http
     const https = require('https');
     const http = require('http');
-    const url = require('url');
     
     const parsedUrl = new URL(imageUrl);
     const client = parsedUrl.protocol === 'https:' ? https : http;
@@ -133,28 +149,16 @@ async function uploadUrlToSupabase(imageUrl, filePath) {
       });
     });
 
-    // Upload to Supabase Storage
-    const { data, error } = await supabase.storage
-      .from('images')
-      .upload(filePath, buffer, {
-        contentType: 'image/jpeg',
-        upsert: true
-      });
-
-    if (error) {
-      console.error('❌ Supabase Storage upload error:', error);
-      return null;
+    // Detect content type from response headers or filename
+    let contentType = 'image/jpeg'; // Default
+    if (filename.endsWith('.png')) {
+      contentType = 'image/png';
+    } else if (filename.endsWith('.jpg') || filename.endsWith('.jpeg')) {
+      contentType = 'image/jpeg';
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from('images')
-      .getPublicUrl(filePath);
-
-    console.log(`✅ Downloaded and uploaded image to Supabase Storage: ${filePath}`);
-    console.log(`📸 Public URL: ${urlData.publicUrl}`);
-    
-    return urlData.publicUrl;
+    // Use generic upload function
+    return await uploadToSupabase(buffer, contentType, filename);
   } catch (error) {
     console.error('❌ Error uploading URL to Supabase Storage:', error);
     return null;
