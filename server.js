@@ -491,23 +491,26 @@ app.post('/api/generate-photo', async (req, res) => {
     console.log('📸 Has profile image for face consistency:', !!profileImageBase64);
     console.log('📸 Is portrait request:', isPortraitRequest);
     
-    // ========== PROMPT CONSTRUCTION - USER DESCRIPTION FIRST ==========
-    // CRITICAL: User's description is the PRIMARY and MAIN focus.
-    // Character traits are kept MINIMAL - only for style consistency.
-    // Face consistency is maintained via Img2Img/FaceSwap, NOT through detailed prompts.
+    // ========== PROMPT CONSTRUCTION - USER DESCRIPTION ONLY ==========
+    // CRITICAL: User's description is EVERYTHING. No character traits added.
+    // Face consistency is maintained via Img2Img/FaceSwap ONLY.
     
     // SCENARIO A: Portrait/Close-up Prompt
-    // User description is the MAIN content, minimal character info for style
-    const photoPrompt = `${description}, ${characterName}, ${appearanceDesc.toLowerCase()} style, high quality, photorealistic`;
+    // User description ONLY - no character traits to avoid bias
+    const photoPrompt = `${description}, high quality, photorealistic`;
     
     // SCENARIO B: Action/Full-body Scene Prompt
-    // User description is the MAIN content, NO facial details to prevent zoom-in
-    // Scene is generated based on user's description, face is swapped later
-    const scenePrompt = `${description}, ${characterName}, ${appearanceDesc.toLowerCase()} style, high quality, photorealistic`;
+    // User description ONLY - scene is generated exactly as user describes
+    // NO character name, NO traits - prevents any portrait bias
+    const scenePrompt = `${description}, high quality, photorealistic`;
+    
+    // Negative prompts to prevent portrait bias
+    const negativePrompt = "portrait, headshot, close-up, face only, upper body only, cropped, zoomed in";
     
     console.log('📸 Photo prompt (Scenario A - Portrait):', photoPrompt);
     console.log('📸 Scene prompt (Scenario B - Action):', scenePrompt);
-    console.log('📸 User description (PRIMARY):', description);
+    console.log('📸 Negative prompt:', negativePrompt);
+    console.log('📸 User description (ONLY content):', description);
 
     let imageURL;
 
@@ -518,6 +521,7 @@ app.post('/api/generate-photo', async (req, res) => {
       // Flux 1.1 Pro input parametreleri (Img2Img)
       const fluxInput = {
         prompt: photoPrompt,
+        negative_prompt: negativePrompt, // Prevent portrait bias
         aspect_ratio: "16:9",
         output_format: "jpg"
       };
@@ -536,7 +540,7 @@ app.post('/api/generate-photo', async (req, res) => {
           
           // Flux 1.1 Pro için img2img parametreleri
           fluxInput.image = imageDataUrl;
-          fluxInput.strength = 0.3; // Portrait için daha yüksek strength
+          fluxInput.strength = 0.2; // Lower strength to allow more scene flexibility
           
           console.log('📸 Using profile image for face consistency (img2img with Flux 1.1 Pro)');
           console.log('📸 Image size:', Buffer.from(profileImageBase64, 'base64').length, 'bytes');
@@ -583,9 +587,10 @@ app.post('/api/generate-photo', async (req, res) => {
       console.log('📸 SCENARIO B: Action/Full-body request - using Text-to-Image + Face Swap');
       
       // Step 1: Generate scene with Flux 1.1 Pro (Text-to-Image, NO image input)
-      // CRITICAL: Use scenePrompt (NOT photoPrompt) to avoid portrait bias
+      // CRITICAL: Use scenePrompt (user description ONLY) to avoid portrait bias
       const fluxInput = {
-        prompt: scenePrompt, // Use scenePrompt which excludes facial details
+        prompt: scenePrompt, // User description ONLY - no character traits
+        negative_prompt: negativePrompt, // Strong negative prompt to prevent portrait
         aspect_ratio: "16:9",
         output_format: "jpg"
       };
@@ -621,30 +626,47 @@ app.post('/api/generate-photo', async (req, res) => {
         });
       }
       
-      // Step 2: Face Swap using yan-ops/face_swap
+      // Step 2: Face Swap using alternative model (logoface/face-swap)
       if (profileImageBase64 && sceneImageURL) {
-        console.log('📸 Step 2: Performing face swap with yan-ops/face_swap...');
+        console.log('📸 Step 2: Performing face swap...');
         
         try {
-          // Convert base64 to data URL for face swap
-          const sourceImageDataUrl = `data:image/jpeg;base64,${profileImageBase64}`;
+          // Try logoface/face-swap first (more reliable)
+          let faceSwapOutput;
           
-          const faceSwapInput = {
-            target_image: sceneImageURL, // The generated scene
-            source_image: sourceImageDataUrl // The character's profile image
-          };
-          
-          console.log('📸 Face swap input:', {
-            target_image: sceneImageURL,
-            source_image: '[base64 data]'
-          });
-          
-          const faceSwapOutput = await Promise.race([
-            replicate.run("yan-ops/face_swap", { input: faceSwapInput }),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('Face swap timeout')), REPLICATE_TIMEOUT * 3)
-            )
-          ]);
+          try {
+            console.log('📸 Trying logoface/face-swap model...');
+            const faceSwapInput = {
+              target_image: sceneImageURL,
+              source_image: `data:image/jpeg;base64,${profileImageBase64}`
+            };
+            
+            faceSwapOutput = await Promise.race([
+              replicate.run("logoface/face-swap", { input: faceSwapInput }),
+              new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Face swap timeout')), REPLICATE_TIMEOUT * 3)
+              )
+            ]);
+            
+            console.log('✅ Face swap completed with logoface/face-swap');
+          } catch (logofaceError) {
+            console.warn('⚠️ logoface/face-swap failed, trying yan-ops/face_swap...', logofaceError.message);
+            
+            // Fallback to yan-ops/face_swap
+            const faceSwapInput = {
+              target_image: sceneImageURL,
+              source_image: `data:image/jpeg;base64,${profileImageBase64}`
+            };
+            
+            faceSwapOutput = await Promise.race([
+              replicate.run("yan-ops/face_swap", { input: faceSwapInput }),
+              new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Face swap timeout')), REPLICATE_TIMEOUT * 3)
+              )
+            ]);
+            
+            console.log('✅ Face swap completed with yan-ops/face_swap');
+          }
           
           // Extract final image URL from face swap output
           if (Array.isArray(faceSwapOutput)) {
@@ -655,9 +677,14 @@ app.post('/api/generate-photo', async (req, res) => {
             imageURL = faceSwapOutput.url || faceSwapOutput.image || faceSwapOutput[0] || null;
           }
           
-          console.log('✅ Face swap completed:', imageURL);
+          if (imageURL) {
+            console.log('✅ Face swap completed successfully:', imageURL);
+          } else {
+            throw new Error('Face swap returned no image URL');
+          }
         } catch (error) {
           console.error('❌ Face swap error:', error);
+          console.error('❌ Face swap error details:', error.message);
           // Fallback to scene image if face swap fails
           console.warn('⚠️ Face swap failed, using scene image as fallback');
           imageURL = sceneImageURL;
