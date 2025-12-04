@@ -317,29 +317,35 @@ app.post('/api/generate-photo', async (req, res) => {
                               descriptionLower.includes('headshot') || 
                               descriptionLower.includes('close-up') ||
                               descriptionLower.includes('closeup') ||
-                              descriptionLower.includes('face only');
+                              descriptionLower.includes('face only') ||
+                              descriptionLower.includes('headshot');
     
     // Eğer kullanıcı açıkça portre istemiyorsa, portre zorlamasını engelle
-    // Negatif prompt ekle: portrait, close-up, headshot gibi ifadeleri engelle
-    const antiPortraitPrompt = isPortraitRequest ? '' : ', NOT a portrait, NOT a close-up, NOT a headshot, NOT face only, full scene, full body or action scene, wide angle view, environmental context';
+    // Sadece portre zorlamasını engelle, kullanıcının istediği kompozisyonu koru
+    const antiPortraitPrompt = isPortraitRequest ? '' : ', AVOID portrait, AVOID close-up, AVOID headshot, AVOID face only, AVOID upper body only';
     
-    // Prompt'u oluştur - kullanıcının isteği ön planda
+    // Prompt'u oluştur - kullanıcının isteği çok ön planda, karakter özellikleri arka planda
+    // Kullanıcının description'ını başa al, karakter özelliklerini sona al
+    // Kullanıcı ne istiyorsa onu üret (full body zorlaması yok)
     const photoPrompt = `${description}${antiPortraitPrompt}, ${characterName} (${physicalDesc}, ${eyeDesc}, ${bodyDesc}), ${appearanceDesc.toLowerCase()} fashion style, high quality, detailed, photorealistic`;
 
     console.log('📸 Photo prompt:', photoPrompt);
     console.log('📸 Has profile image for face consistency:', !!profileImageBase64);
+    console.log('📸 Is portrait request:', isPortraitRequest);
 
-    // Flux 1.1 Pro input parametreleri
-    // Aspect ratio'yu daha geniş yap (portre zorlamasını azaltmak için)
-    const fluxInput = {
-      prompt: photoPrompt,
-      // Flux 1.1 Pro parametreleri
-      aspect_ratio: "16:9", // Geniş format (full body, action shots için daha uygun)
-      output_format: "jpg"
-    };
+    let imageURL;
 
-    // Eğer profil fotoğrafı varsa, image-to-image için kullan
-    if (profileImageBase64) {
+    // ========== SCENARIO A: Portrait/Close-up Request ==========
+    if (isPortraitRequest && profileImageBase64) {
+      console.log('📸 SCENARIO A: Portrait request - using Img2Img with Flux 1.1 Pro');
+      
+      // Flux 1.1 Pro input parametreleri (Img2Img)
+      const fluxInput = {
+        prompt: photoPrompt,
+        aspect_ratio: "16:9",
+        output_format: "jpg"
+      };
+
       try {
         // Base64 string'in uzunluğunu kontrol et
         const base64Length = profileImageBase64.length;
@@ -353,101 +359,143 @@ app.post('/api/generate-photo', async (req, res) => {
           const imageDataUrl = `data:image/jpeg;base64,${profileImageBase64}`;
           
           // Flux 1.1 Pro için img2img parametreleri
-          // Flux 1.1 Pro 'image' parametresi kullanır
           fluxInput.image = imageDataUrl;
-          
-          // Strength: 0.0-1.0 arası, ne kadar orijinal görselden etkileneceği
-          // Çok düşük strength (0.15-0.2) yüzü korurken maksimum yeni sahne/poz yaratır
-          // 0.25 bile portre zorlayabilir, daha da düşürelim
-          // Eğer portre istenmiyorsa, strength'i çok düşük tut (sadece yüz tutarlılığı için)
-          fluxInput.strength = isPortraitRequest ? 0.3 : 0.15; // Portre değilse çok düşük strength
+          fluxInput.strength = 0.3; // Portrait için daha yüksek strength
           
           console.log('📸 Using profile image for face consistency (img2img with Flux 1.1 Pro)');
           console.log('📸 Image size:', Buffer.from(profileImageBase64, 'base64').length, 'bytes');
-          console.log('📸 Strength:', fluxInput.strength, '(lower for more scene flexibility)');
+          console.log('📸 Strength:', fluxInput.strength);
         }
       } catch (error) {
         console.error('❌ Error processing profile image:', error);
-        // Hata olsa bile devam et, sadece profil fotoğrafı olmadan üret
+        return res.status(500).json({ 
+          error: 'Failed to process profile image',
+          details: error.message
+        });
+      }
+
+      // Replicate API ile fotoğraf oluştur (Flux 1.1 Pro - img2img)
+      try {
+        const output = await Promise.race([
+          replicate.run("black-forest-labs/flux-1.1-pro", { input: fluxInput }),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Photo generation timeout')), REPLICATE_TIMEOUT * 3)
+          )
+        ]);
+        
+        // Extract image URL from output
+        if (Array.isArray(output)) {
+          imageURL = output[0];
+        } else if (typeof output === 'string') {
+          imageURL = output;
+        } else if (output && typeof output === 'object') {
+          imageURL = output.url || output.image || output[0] || null;
+        }
+        
+        console.log('✅ Portrait photo generated:', imageURL);
+      } catch (error) {
+        console.error('❌ Replicate API error (portrait):', error);
+        return res.status(500).json({ 
+          error: 'Failed to generate photo',
+          details: error.message || 'Unknown error',
+          model: 'black-forest-labs/flux-1.1-pro'
+        });
       }
     }
-
-    console.log('📸 Flux 1.1 Pro input keys:', Object.keys(fluxInput));
-    console.log('📸 Flux 1.1 Pro input (without image data):', JSON.stringify({ ...fluxInput, image: fluxInput.image ? '[image data]' : undefined }, null, 2));
-
-    // Replicate API ile fotoğraf oluştur (Flux 1.1 Pro - img2img destekli)
-    console.log('📸 Calling Replicate API with Flux 1.1 Pro...');
-    console.log('📸 Input parameters:', JSON.stringify({ ...fluxInput, image: fluxInput.image ? '[image data]' : undefined }, null, 2));
-    
-    let output;
-    try {
-      output = await Promise.race([
-        replicate.run(
-          "black-forest-labs/flux-1.1-pro",
-          {
-            input: fluxInput
+    // ========== SCENARIO B: Action/Full-body Request ==========
+    else {
+      console.log('📸 SCENARIO B: Action/Full-body request - using Text-to-Image + Face Swap');
+      
+      // Step 1: Generate scene with Flux 1.1 Pro (Text-to-Image, NO image input)
+      const fluxInput = {
+        prompt: photoPrompt,
+        aspect_ratio: "16:9",
+        output_format: "jpg"
+      };
+      
+      console.log('📸 Step 1: Generating scene with Flux 1.1 Pro (text-to-image)...');
+      
+      let sceneImageURL;
+      try {
+        const output = await Promise.race([
+          replicate.run("black-forest-labs/flux-1.1-pro", { input: fluxInput }),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Scene generation timeout')), REPLICATE_TIMEOUT * 3)
+          )
+        ]);
+        
+        // Extract scene image URL from output
+        if (Array.isArray(output)) {
+          sceneImageURL = output[0];
+        } else if (typeof output === 'string') {
+          sceneImageURL = output;
+        } else if (output && typeof output === 'object') {
+          sceneImageURL = output.url || output.image || output[0] || null;
+        }
+        
+        console.log('✅ Scene generated:', sceneImageURL);
+      } catch (error) {
+        console.error('❌ Replicate API error (scene generation):', error);
+        return res.status(500).json({ 
+          error: 'Failed to generate scene',
+          details: error.message || 'Unknown error',
+          model: 'black-forest-labs/flux-1.1-pro'
+        });
+      }
+      
+      // Step 2: Face Swap using cdingram/face-swap
+      if (profileImageBase64 && sceneImageURL) {
+        console.log('📸 Step 2: Performing face swap with cdingram/face-swap...');
+        
+        try {
+          // Convert base64 to data URL for face swap
+          const sourceImageDataUrl = `data:image/jpeg;base64,${profileImageBase64}`;
+          
+          const faceSwapInput = {
+            target_image: sceneImageURL, // The generated scene
+            source_image: sourceImageDataUrl // The character's profile image
+          };
+          
+          console.log('📸 Face swap input:', {
+            target_image: sceneImageURL,
+            source_image: '[base64 data]'
+          });
+          
+          const faceSwapOutput = await Promise.race([
+            replicate.run("cdingram/face-swap:d1d6ea8c8be89d664a07a457526f7128109dee7030fdac424788d762c71ed111", { input: faceSwapInput }),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Face swap timeout')), REPLICATE_TIMEOUT * 3)
+            )
+          ]);
+          
+          // Extract final image URL from face swap output
+          if (Array.isArray(faceSwapOutput)) {
+            imageURL = faceSwapOutput[0];
+          } else if (typeof faceSwapOutput === 'string') {
+            imageURL = faceSwapOutput;
+          } else if (faceSwapOutput && typeof faceSwapOutput === 'object') {
+            imageURL = faceSwapOutput.url || faceSwapOutput.image || faceSwapOutput[0] || null;
           }
-        ),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Photo generation timeout')), REPLICATE_TIMEOUT * 3) // Fotoğraf üretimi daha uzun sürebilir (3x timeout)
-        )
-      ]);
-      console.log('✅ Replicate API response received');
-      console.log('📸 Output type:', typeof output);
-      console.log('📸 Output (first 500 chars):', JSON.stringify(output).substring(0, 500));
-    } catch (error) {
-      console.error('❌ ========== Replicate API error ==========');
-      console.error('❌ Error message:', error.message);
-      console.error('❌ Error name:', error.name);
-      console.error('❌ Error stack:', error.stack);
-      
-      // Daha detaylı hata bilgisi
-      if (error.response) {
-        console.error('❌ Error response:', JSON.stringify(error.response, null, 2));
+          
+          console.log('✅ Face swap completed:', imageURL);
+        } catch (error) {
+          console.error('❌ Face swap error:', error);
+          // Fallback to scene image if face swap fails
+          console.warn('⚠️ Face swap failed, using scene image as fallback');
+          imageURL = sceneImageURL;
+        }
+      } else {
+        // No profile image, use scene directly
+        console.log('⚠️ No profile image available, using scene image directly');
+        imageURL = sceneImageURL;
       }
-      if (error.request) {
-        console.error('❌ Error request:', error.request);
-      }
-      if (error.body) {
-        console.error('❌ Error body:', JSON.stringify(error.body, null, 2));
-      }
-      
-      // Hata mesajını kullanıcıya döndür
-      return res.status(500).json({ 
-        error: 'Failed to generate photo',
-        details: error.message || 'Unknown error',
-        model: 'black-forest-labs/flux-1.1-pro'
-      });
     }
 
-    // Replicate output formatı: ["https://..."] veya string
-    console.log('📸 Processing output...');
-    let imageURL;
-    
-    if (Array.isArray(output)) {
-      imageURL = output[0];
-      console.log('📸 Output is array, first element:', imageURL);
-    } else if (typeof output === 'string') {
-      imageURL = output;
-      console.log('📸 Output is string:', imageURL);
-    } else if (output && typeof output === 'object') {
-      // Bazen output bir obje olabilir
-      imageURL = output.url || output.image || output[0] || null;
-      console.log('📸 Output is object, extracted URL:', imageURL);
-      console.log('📸 Object keys:', Object.keys(output));
-    } else {
-      imageURL = null;
-      console.error('❌ Unknown output format');
-    }
-
+    // Validate image URL
     if (!imageURL) {
       console.error('❌ No image URL in output');
-      console.error('❌ Output type:', typeof output);
-      console.error('❌ Output value:', JSON.stringify(output, null, 2));
       return res.status(500).json({ 
-        error: 'Failed to generate photo - no image URL in response',
-        outputType: typeof output,
-        output: output
+        error: 'Failed to generate photo - no image URL in response'
       });
     }
     
@@ -460,7 +508,7 @@ app.post('/api/generate-photo', async (req, res) => {
       });
     }
 
-    console.log('✅ Photo generated:', imageURL);
+    console.log('✅ Final photo generated:', imageURL);
 
     res.json({ 
       imageURL: imageURL,
