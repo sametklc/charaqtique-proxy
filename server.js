@@ -1038,14 +1038,39 @@ app.post('/api/save-messages', async (req, res) => {
     }));
 
     console.log('💾 Inserting', messagesToInsert.length, 'messages into Supabase...');
-    const { data, error } = await supabase
+    console.log('💾 First message to insert:', JSON.stringify(messagesToInsert[0], null, 2));
+    
+    const { data: insertData, error } = await supabase
       .from('messages')
-      .insert(messagesToInsert);
+      .insert(messagesToInsert)
+      .select(); // Insert edilen verileri döndür
 
     if (error) {
       console.error('❌ Supabase error saving messages:', error);
       console.error('❌ Error details:', JSON.stringify(error, null, 2));
       return res.status(500).json({ error: 'Failed to save messages', details: error.message });
+    }
+
+    console.log('💾 Insert result:', insertData ? `${insertData.length} rows inserted` : 'no data returned');
+    if (insertData && insertData.length > 0) {
+      console.log('💾 First inserted message:', JSON.stringify(insertData[0], null, 2));
+    }
+
+    // Verify: Hemen query yap ve kontrol et
+    console.log('💾 Verifying insert by querying Supabase...');
+    const { data: verifyData, error: verifyError } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('character_id', characterId);
+
+    if (verifyError) {
+      console.error('❌ Error verifying messages:', verifyError);
+    } else {
+      console.log('💾 Verification: Found', verifyData?.length || 0, 'messages in database');
+      if (verifyData && verifyData.length > 0) {
+        console.log('💾 First verified message:', JSON.stringify(verifyData[0], null, 2));
+      }
     }
 
     console.log(`✅ Successfully saved ${messages.length} messages for user ${userId}, character ${characterId}`);
@@ -1076,6 +1101,26 @@ app.get('/api/load-messages', async (req, res) => {
     }
 
     console.log('📥 Querying Supabase for messages...');
+    console.log('📥 Query filters: user_id=', userId, ', character_id=', characterId);
+    
+    // Önce tüm mesajları kontrol et (debug için)
+    const { data: allMessages, error: allError } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('user_id', userId);
+    
+    if (allError) {
+      console.error('❌ Error querying all messages for user:', allError);
+    } else {
+      console.log('📥 Total messages for user', userId, ':', allMessages?.length || 0);
+      if (allMessages && allMessages.length > 0) {
+        console.log('📥 First message in DB:', JSON.stringify(allMessages[0], null, 2));
+        console.log('📥 First message character_id:', allMessages[0].character_id);
+        console.log('📥 Requested character_id:', characterId);
+        console.log('📥 Character IDs match?', allMessages[0].character_id === characterId);
+      }
+    }
+    
     const { data, error } = await supabase
       .from('messages')
       .select('*')
@@ -1090,6 +1135,9 @@ app.get('/api/load-messages', async (req, res) => {
     }
 
     console.log('📥 Supabase returned', data?.length || 0, 'messages');
+    if (data && data.length === 0) {
+      console.warn('⚠️ No messages found! Query filters might be wrong or messages not saved correctly.');
+    }
 
     // Supabase'den gelen verileri iOS formatına çevir
     const messages = (data || []).map((row, index) => {
