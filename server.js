@@ -748,6 +748,23 @@ app.post('/api/save-characters', async (req, res) => {
       return res.status(500).json({ error: 'Supabase not configured' });
     }
 
+    // Önce mevcut karakterleri al (Supabase Storage URL'lerini korumak için)
+    const { data: existingCharacters, error: fetchError } = await supabase
+      .from('characters')
+      .select('character_id, profile_image_url, full_body_image_url')
+      .eq('user_id', userId);
+
+    // Mevcut karakterlerin Supabase Storage URL'lerini sakla
+    const existingImageURLs = {};
+    if (existingCharacters) {
+      for (const existing of existingCharacters) {
+        existingImageURLs[existing.character_id] = {
+          profile_image_url: existing.profile_image_url,
+          full_body_image_url: existing.full_body_image_url
+        };
+      }
+    }
+
     // Önce mevcut karakterleri sil (upsert için)
     await supabase
       .from('characters')
@@ -762,12 +779,33 @@ app.post('/api/save-characters', async (req, res) => {
         traits = {};
       }
       
+      // Eğer profileImageURL veya fullBodyImageURL boşsa veya local path ise (file:// ile başlıyorsa),
+      // mevcut Supabase Storage URL'sini kullan
+      let profileImageURL = char.profileImageURL || null;
+      let fullBodyImageURL = char.fullBodyImageURL || null;
+      
+      if (!profileImageURL || profileImageURL.startsWith('file://') || profileImageURL === '') {
+        const existing = existingImageURLs[char.id];
+        if (existing && existing.profile_image_url) {
+          profileImageURL = existing.profile_image_url;
+          console.log(`📸 Using existing profile URL for character ${char.id}: ${profileImageURL}`);
+        }
+      }
+      
+      if (!fullBodyImageURL || fullBodyImageURL.startsWith('file://') || fullBodyImageURL === '') {
+        const existing = existingImageURLs[char.id];
+        if (existing && existing.full_body_image_url) {
+          fullBodyImageURL = existing.full_body_image_url;
+          console.log(`📸 Using existing full body URL for character ${char.id}: ${fullBodyImageURL}`);
+        }
+      }
+      
       return {
         user_id: userId,
         character_id: char.id,
         name: char.name,
-        profile_image_url: char.profileImageURL || null,
-        full_body_image_url: char.fullBodyImageURL || null,
+        profile_image_url: profileImageURL,
+        full_body_image_url: fullBodyImageURL,
         created_at: char.createdAt,
         is_user_created: char.isUserCreated || true,
         character_traits: traits
