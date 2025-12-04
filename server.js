@@ -1504,9 +1504,13 @@ app.delete('/api/delete-messages', async (req, res) => {
 
 app.post('/api/deduct-coins', async (req, res) => {
   try {
+    console.log('💰 Coin deduction endpoint called');
+    console.log('💰 Request body:', JSON.stringify(req.body, null, 2));
+    
     const { userId, inputTokens, outputTokens, model } = req.body;
 
     if (!userId || inputTokens === undefined || outputTokens === undefined) {
+      console.error('❌ Missing required fields:', { userId, inputTokens, outputTokens });
       return res.status(400).json({ error: 'Missing required fields: userId, inputTokens, outputTokens' });
     }
 
@@ -1520,7 +1524,18 @@ app.post('/api/deduct-coins', async (req, res) => {
     const inputCostUSD = inputTokens * 0.00006;
     const outputCostUSD = outputTokens * 0.00024;
     const totalCostUSD = inputCostUSD + outputCostUSD;
-    const coinCost = Math.ceil(totalCostUSD * 500); // Maliyetin 5 katı (500x multiplier)
+    
+    // Minimum cost: If no tokens used, apply minimum session cost (e.g., 1 minute = ~150 tokens)
+    // This ensures users are charged even for very short calls
+    const minimumTokens = 150; // Approximate tokens for 1 minute
+    const minimumCostUSD = minimumTokens * 0.00006; // Minimum input cost
+    const finalCostUSD = totalCostUSD > 0 ? totalCostUSD : minimumCostUSD;
+    
+    const coinCost = Math.ceil(finalCostUSD * 500); // Maliyetin 5 katı (500x multiplier)
+    
+    if (totalCostUSD === 0) {
+      console.log(`💰 Applied minimum cost - Original: $${totalCostUSD.toFixed(4)}, Minimum: $${minimumCostUSD.toFixed(4)}, Final: $${finalCostUSD.toFixed(4)}`);
+    }
 
     console.log(`💰 Cost calculation - Input: $${inputCostUSD.toFixed(4)}, Output: $${outputCostUSD.toFixed(4)}, Total: $${totalCostUSD.toFixed(4)}, Coins: ${coinCost}`);
 
