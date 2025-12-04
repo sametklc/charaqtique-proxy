@@ -837,9 +837,8 @@ app.post('/api/realtime/connect', async (req, res) => {
     console.log('✅ OpenAI API key found (length:', OPENAI_API_KEY.length, ')');
 
     // OpenAI Realtime API WebSocket URL'i
-    // Note: Model parameter removed from URL - it should be specified in session.update if needed
-    // The base URL without model parameter should work for the default model
-    const wsUrl = 'wss://api.openai.com/v1/realtime';
+    // Note: Model parameter is required - using gpt-4o-realtime-preview-2024-12-17
+    const wsUrl = 'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17';
 
     console.log('🔌 WebSocket URL:', wsUrl);
 
