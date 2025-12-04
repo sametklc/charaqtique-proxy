@@ -1140,23 +1140,30 @@ app.post('/api/save-messages', async (req, res) => {
     const messagesToInsert = await Promise.all(messages.map(async (msg, index) => {
       let imageUrl = msg.imageURL || null;
 
+      // If imageURL is already a Supabase Storage URL (http:// or https://), use it directly
+      if (imageUrl && (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'))) {
+        // Already a Supabase Storage URL, use it directly
+        console.log(`✅ Message ${index + 1}/${messages.length} already has Supabase Storage URL: ${imageUrl}`);
+        // No need to upload, already in Supabase Storage
+      }
       // If imageURL is Base64, upload to Storage
-      if (imageUrl && (imageUrl.startsWith('data:image') || imageUrl.startsWith('file://'))) {
+      else if (imageUrl && imageUrl.startsWith('data:image')) {
         // Extract base64 if it's a data URI
-        if (imageUrl.startsWith('data:image')) {
-          const filePath = `chat_images/${msg.id}.jpg`;
-          console.log(`💾 Uploading message image ${index + 1}/${messages.length} to Storage: ${filePath}`);
-          const publicUrl = await uploadBase64ToSupabase(imageUrl, filePath);
-          if (publicUrl) {
-            imageUrl = publicUrl;
-            console.log(`✅ Uploaded message image to Storage: ${filePath}`);
-          } else {
-            console.error(`❌ Failed to upload message image for message ${msg.id}`);
-            imageUrl = null; // Don't save if upload failed
-          }
+        const filePath = `chat_images/${msg.id}.jpg`;
+        console.log(`💾 Uploading message image ${index + 1}/${messages.length} to Storage: ${filePath}`);
+        const publicUrl = await uploadBase64ToSupabase(imageUrl, filePath);
+        if (publicUrl) {
+          imageUrl = publicUrl;
+          console.log(`✅ Uploaded message image to Storage: ${filePath}`);
+        } else {
+          console.error(`❌ Failed to upload message image for message ${msg.id}`);
+          imageUrl = null; // Don't save if upload failed
         }
-        // If it's a file:// URL, skip (iOS will handle local files)
-        // We only upload Base64 images from iOS
+      }
+      // If it's a file:// URL, skip (shouldn't happen anymore, but handle gracefully)
+      else if (imageUrl && imageUrl.startsWith('file://')) {
+        console.warn(`⚠️ Message ${index + 1}/${messages.length} has file:// URL, skipping (should be Supabase Storage URL): ${imageUrl}`);
+        imageUrl = null; // Don't save local file paths
       }
 
       return {
