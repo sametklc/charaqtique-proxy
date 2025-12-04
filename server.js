@@ -495,22 +495,31 @@ app.post('/api/generate-photo', async (req, res) => {
     // CRITICAL: User's description is EVERYTHING. No character traits added.
     // Face consistency is maintained via Img2Img/FaceSwap ONLY.
     
+    // Clean user description - remove Turkish phrases like "bana", "fotoğrafını at" etc.
+    let cleanDescription = description
+      .replace(/bana\s+/gi, '')
+      .replace(/\s+fotoğrafını\s+at/gi, '')
+      .replace(/\s+foto\s+at/gi, '')
+      .replace(/\s+fotoğraf\s+at/gi, '')
+      .trim();
+    
     // SCENARIO A: Portrait/Close-up Prompt
     // User description ONLY - no character traits to avoid bias
-    const photoPrompt = `${description}, high quality, photorealistic`;
+    const photoPrompt = `${cleanDescription}, high quality, photorealistic`;
     
     // SCENARIO B: Action/Full-body Scene Prompt
     // User description ONLY - scene is generated exactly as user describes
     // NO character name, NO traits - prevents any portrait bias
-    const scenePrompt = `${description}, high quality, photorealistic`;
+    const scenePrompt = `${cleanDescription}, wide angle, full scene, environmental context, high quality, photorealistic`;
     
-    // Negative prompts to prevent portrait bias
-    const negativePrompt = "portrait, headshot, close-up, face only, upper body only, cropped, zoomed in";
+    // Strong negative prompts to prevent portrait bias
+    const negativePrompt = "portrait, headshot, close-up, face only, upper body only, cropped, zoomed in, face closeup, head only, bust shot, shoulder up";
     
+    console.log('📸 Original description:', description);
+    console.log('📸 Cleaned description:', cleanDescription);
     console.log('📸 Photo prompt (Scenario A - Portrait):', photoPrompt);
     console.log('📸 Scene prompt (Scenario B - Action):', scenePrompt);
     console.log('📸 Negative prompt:', negativePrompt);
-    console.log('📸 User description (ONLY content):', description);
 
     let imageURL;
 
@@ -626,46 +635,68 @@ app.post('/api/generate-photo', async (req, res) => {
         });
       }
       
-      // Step 2: Face Swap using alternative model (logoface/face-swap)
+      // Step 2: Face Swap using easel/advanced-face-swap
       if (profileImageBase64 && sceneImageURL) {
-        console.log('📸 Step 2: Performing face swap...');
+        console.log('📸 Step 2: Performing face swap with easel/advanced-face-swap...');
         
         try {
-          // Try logoface/face-swap first (more reliable)
           let faceSwapOutput;
+          const sourceImageDataUrl = `data:image/jpeg;base64,${profileImageBase64}`;
           
+          // Try easel/advanced-face-swap first (primary model)
           try {
-            console.log('📸 Trying logoface/face-swap model...');
+            console.log('📸 Trying easel/advanced-face-swap model...');
             const faceSwapInput = {
               target_image: sceneImageURL,
-              source_image: `data:image/jpeg;base64,${profileImageBase64}`
+              source_image: sourceImageDataUrl
             };
             
             faceSwapOutput = await Promise.race([
-              replicate.run("logoface/face-swap", { input: faceSwapInput }),
+              replicate.run("easel/advanced-face-swap", { input: faceSwapInput }),
               new Promise((_, reject) => 
                 setTimeout(() => reject(new Error('Face swap timeout')), REPLICATE_TIMEOUT * 3)
               )
             ]);
             
-            console.log('✅ Face swap completed with logoface/face-swap');
-          } catch (logofaceError) {
-            console.warn('⚠️ logoface/face-swap failed, trying yan-ops/face_swap...', logofaceError.message);
+            console.log('✅ Face swap completed with easel/advanced-face-swap');
+          } catch (easelError) {
+            console.warn('⚠️ easel/advanced-face-swap failed, trying fallback models...', easelError.message);
             
-            // Fallback to yan-ops/face_swap
-            const faceSwapInput = {
-              target_image: sceneImageURL,
-              source_image: `data:image/jpeg;base64,${profileImageBase64}`
-            };
+            // Fallback models
+            const fallbackModels = [
+              "lucataco/faceswap",
+              "fofr/face-swap",
+              "cdingram/face-swap:d1d6ea8c8be89d664a07a457526f7128109dee7030fdac424788d762c71ed111"
+            ];
             
-            faceSwapOutput = await Promise.race([
-              replicate.run("yan-ops/face_swap", { input: faceSwapInput }),
-              new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Face swap timeout')), REPLICATE_TIMEOUT * 3)
-              )
-            ]);
+            let lastError = easelError;
+            for (const model of fallbackModels) {
+              try {
+                console.log(`📸 Trying fallback model: ${model}...`);
+                const faceSwapInput = {
+                  target_image: sceneImageURL,
+                  source_image: sourceImageDataUrl
+                };
+                
+                faceSwapOutput = await Promise.race([
+                  replicate.run(model, { input: faceSwapInput }),
+                  new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Face swap timeout')), REPLICATE_TIMEOUT * 3)
+                  )
+                ]);
+                
+                console.log(`✅ Face swap completed with ${model}`);
+                break; // Success, exit loop
+              } catch (modelError) {
+                console.warn(`⚠️ ${model} failed:`, modelError.message);
+                lastError = modelError;
+                continue; // Try next model
+              }
+            }
             
-            console.log('✅ Face swap completed with yan-ops/face_swap');
+            if (!faceSwapOutput) {
+              throw lastError || new Error('All face swap models failed');
+            }
           }
           
           // Extract final image URL from face swap output
@@ -683,11 +714,41 @@ app.post('/api/generate-photo', async (req, res) => {
             throw new Error('Face swap returned no image URL');
           }
         } catch (error) {
-          console.error('❌ Face swap error:', error);
-          console.error('❌ Face swap error details:', error.message);
-          // Fallback to scene image if face swap fails
-          console.warn('⚠️ Face swap failed, using scene image as fallback');
-          imageURL = sceneImageURL;
+          console.error('❌ All face swap models failed:', error.message);
+          // Fallback: Use Img2Img with very low strength for face consistency
+          console.log('📸 Fallback: Using Img2Img with very low strength (0.1) for face consistency...');
+          
+          try {
+            const fallbackInput = {
+              prompt: scenePrompt,
+              negative_prompt: negativePrompt,
+              image: `data:image/jpeg;base64,${profileImageBase64}`,
+              strength: 0.1, // Very low strength to preserve scene but maintain face
+              aspect_ratio: "16:9",
+              output_format: "jpg"
+            };
+            
+            const fallbackOutput = await Promise.race([
+              replicate.run("black-forest-labs/flux-1.1-pro", { input: fallbackInput }),
+              new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Fallback timeout')), REPLICATE_TIMEOUT * 3)
+              )
+            ]);
+            
+            if (Array.isArray(fallbackOutput)) {
+              imageURL = fallbackOutput[0];
+            } else if (typeof fallbackOutput === 'string') {
+              imageURL = fallbackOutput;
+            } else if (fallbackOutput && typeof fallbackOutput === 'object') {
+              imageURL = fallbackOutput.url || fallbackOutput.image || fallbackOutput[0] || null;
+            }
+            
+            console.log('✅ Fallback Img2Img completed:', imageURL);
+          } catch (fallbackError) {
+            console.error('❌ Fallback Img2Img also failed:', fallbackError.message);
+            console.warn('⚠️ Using scene image without face swap');
+            imageURL = sceneImageURL;
+          }
         }
       } else {
         // No profile image, use scene directly
