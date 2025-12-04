@@ -816,13 +816,43 @@ app.post('/api/save-characters', async (req, res) => {
       };
     });
 
+    console.log(`💾 Inserting ${charactersToInsert.length} characters into Supabase...`);
+    if (charactersToInsert.length > 0) {
+      console.log(`💾 First character to insert:`, JSON.stringify(charactersToInsert[0], null, 2));
+    }
+
     const { data, error } = await supabase
       .from('characters')
-      .insert(charactersToInsert);
+      .insert(charactersToInsert)
+      .select(); // Insert edilen verileri döndür
 
     if (error) {
       console.error('❌ Supabase error saving characters:', error);
+      console.error('❌ Error code:', error.code);
+      console.error('❌ Error message:', error.message);
+      console.error('❌ Error details:', JSON.stringify(error, null, 2));
       return res.status(500).json({ error: 'Failed to save characters', details: error.message });
+    }
+
+    console.log(`💾 Insert result: ${data ? data.length : 0} rows inserted`);
+    if (data && data.length > 0) {
+      console.log(`💾 First inserted character:`, JSON.stringify(data[0], null, 2));
+    }
+
+    // Verify: Hemen query yap ve kontrol et
+    console.log('💾 Verifying insert by querying Supabase...');
+    const { data: verifyData, error: verifyError } = await supabase
+      .from('characters')
+      .select('*')
+      .eq('user_id', userId);
+
+    if (verifyError) {
+      console.error('❌ Error verifying characters:', verifyError);
+    } else {
+      console.log(`💾 Verification: Found ${verifyData?.length || 0} characters in database`);
+      if (verifyData && verifyData.length > 0) {
+        console.log(`💾 First verified character:`, JSON.stringify(verifyData[0], null, 2));
+      }
     }
 
     console.log(`✅ Saved ${characters.length} characters for user ${userId}`);
