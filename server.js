@@ -836,16 +836,22 @@ app.post('/api/save-characters', async (req, res) => {
 // Karakterleri yükle (Supabase)
 app.get('/api/load-characters', async (req, res) => {
   try {
+    console.log('📥 ========== LOAD CHARACTERS REQUEST ==========');
     const { userId } = req.query;
 
+    console.log('📥 User ID:', userId);
+
     if (!userId) {
+      console.error('❌ Missing userId');
       return res.status(400).json({ error: 'userId is required' });
     }
 
     if (!supabase) {
+      console.error('❌ Supabase not configured');
       return res.status(500).json({ error: 'Supabase not configured' });
     }
 
+    console.log('📥 Querying Supabase for characters...');
     const { data, error } = await supabase
       .from('characters')
       .select('*')
@@ -854,11 +860,19 @@ app.get('/api/load-characters', async (req, res) => {
 
     if (error) {
       console.error('❌ Supabase error loading characters:', error);
+      console.error('❌ Error details:', JSON.stringify(error, null, 2));
       return res.status(500).json({ error: 'Failed to load characters', details: error.message });
     }
 
+    console.log('📥 Supabase returned', data?.length || 0, 'characters');
+    if (data && data.length > 0) {
+      console.log('📥 First character:', JSON.stringify(data[0], null, 2));
+    } else {
+      console.warn('⚠️ No characters found for user', userId);
+    }
+
     // Supabase'den gelen verileri iOS formatına çevir
-    const characters = (data || []).map(row => {
+    const characters = (data || []).map((row, index) => {
       // character_traits JSONB'den parse et
       let traits = row.character_traits;
       if (typeof traits === 'string') {
@@ -870,7 +884,7 @@ app.get('/api/load-characters', async (req, res) => {
         }
       }
       
-      return {
+      const character = {
         id: row.character_id,
         name: row.name,
         profileImageURL: row.profile_image_url,
@@ -879,12 +893,20 @@ app.get('/api/load-characters', async (req, res) => {
         isUserCreated: row.is_user_created,
         characterTraits: traits
       };
+      
+      // İlk 3 karakteri logla
+      if (index < 3) {
+        console.log(`📥 Character ${index + 1}: id=${row.character_id}, name=${row.name}, profileURL=${row.profile_image_url || 'nil'}, fullBodyURL=${row.full_body_image_url || 'nil'}`);
+      }
+      
+      return character;
     });
 
-    console.log(`✅ Loaded ${characters.length} characters for user ${userId}`);
+    console.log(`✅ Successfully loaded ${characters.length} characters for user ${userId}`);
     res.json({ success: true, characters });
   } catch (error) {
     console.error('❌ Error loading characters:', error);
+    console.error('❌ Error stack:', error.stack);
     res.status(500).json({ error: 'Failed to load characters', details: error.message });
   }
 });
@@ -1047,17 +1069,25 @@ app.post('/api/save-messages', async (req, res) => {
 
     if (error) {
       console.error('❌ Supabase error saving messages:', error);
+      console.error('❌ Error code:', error.code);
+      console.error('❌ Error message:', error.message);
       console.error('❌ Error details:', JSON.stringify(error, null, 2));
+      console.error('❌ Error hint:', error.hint);
       return res.status(500).json({ error: 'Failed to save messages', details: error.message });
     }
 
     console.log('💾 Insert result:', insertData ? `${insertData.length} rows inserted` : 'no data returned');
     if (insertData && insertData.length > 0) {
       console.log('💾 First inserted message:', JSON.stringify(insertData[0], null, 2));
+      console.log('💾 Inserted message character_id:', insertData[0].character_id);
+      console.log('💾 Inserted message user_id:', insertData[0].user_id);
+    } else if (!insertData) {
+      console.warn('⚠️ Insert returned no data - this might indicate RLS policy blocking the response');
     }
 
     // Verify: Hemen query yap ve kontrol et
     console.log('💾 Verifying insert by querying Supabase...');
+    console.log('💾 Verification query filters: user_id=', userId, ', character_id=', characterId);
     const { data: verifyData, error: verifyError } = await supabase
       .from('messages')
       .select('*')
@@ -1066,10 +1096,31 @@ app.post('/api/save-messages', async (req, res) => {
 
     if (verifyError) {
       console.error('❌ Error verifying messages:', verifyError);
+      console.error('❌ Verification error details:', JSON.stringify(verifyError, null, 2));
     } else {
       console.log('💾 Verification: Found', verifyData?.length || 0, 'messages in database');
       if (verifyData && verifyData.length > 0) {
         console.log('💾 First verified message:', JSON.stringify(verifyData[0], null, 2));
+        console.log('💾 Verified message character_id:', verifyData[0].character_id);
+        console.log('💾 Verified message user_id:', verifyData[0].user_id);
+      } else {
+        console.error('❌ VERIFICATION FAILED: No messages found after insert!');
+        console.error('❌ This means insert succeeded but query failed - possible RLS issue or data type mismatch');
+        
+        // Try querying without filters to see if data exists
+        const { data: allData, error: allError } = await supabase
+          .from('messages')
+          .select('*')
+          .limit(5);
+        
+        if (allError) {
+          console.error('❌ Error querying all messages:', allError);
+        } else {
+          console.log('💾 Total messages in table:', allData?.length || 0);
+          if (allData && allData.length > 0) {
+            console.log('💾 Sample message from table:', JSON.stringify(allData[0], null, 2));
+          }
+        }
       }
     }
 
