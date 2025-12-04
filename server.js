@@ -49,8 +49,8 @@ const REPLICATE_TIMEOUT = 60000; // 60 saniye
  * @param {string} filename - Path in bucket (e.g., "avatars/character_id_profile.jpg")
  * @returns {Promise<string|null>} - Public URL or null on error
  */
-// Bucket'ı kontrol et ve oluştur (eğer yoksa)
-async function ensureBucketExists() {
+// Bucket'ı kontrol et (oluşturma denemesi yapmadan)
+async function checkBucketExists() {
   if (!supabase) {
     console.error('❌ Supabase not configured');
     return false;
@@ -61,39 +61,31 @@ async function ensureBucketExists() {
     const { data: buckets, error: listError } = await supabase.storage.listBuckets();
     
     if (listError) {
-      console.error('❌ Error listing buckets:', listError);
-      return false;
+      // Eğer listBuckets hatası alırsak, RLS policy eksik olabilir
+      // Ama bucket var olabilir, direkt upload denemesi yapalım
+      console.warn('⚠️ Cannot list buckets (RLS policy may be missing), but will try to upload anyway');
+      console.warn('⚠️ If upload fails, make sure:');
+      console.warn('   1. Bucket "images" exists in Supabase Dashboard');
+      console.warn('   2. Storage RLS policy is added (see BUCKET_SETUP.md)');
+      return true; // Upload denemesi yapalım
     }
 
     // 'images' bucket'ı var mı kontrol et
     const imagesBucket = buckets?.find(b => b.name === 'images');
     
     if (!imagesBucket) {
-      console.warn('⚠️ "images" bucket not found, attempting to create...');
-      
-      // Bucket oluştur (public)
-      const { data: newBucket, error: createError } = await supabase.storage.createBucket('images', {
-        public: true,
-        allowedMimeTypes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
-        fileSizeLimit: 52428800 // 50MB
-      });
-
-      if (createError) {
-        console.error('❌ Failed to create "images" bucket:', createError);
-        console.error('❌ Please create the bucket manually in Supabase Dashboard > Storage');
-        console.error('❌ Bucket name: "images", Public: true');
-        return false;
-      }
-
-      console.log('✅ Created "images" bucket successfully');
-      return true;
+      console.error('❌ "images" bucket not found in bucket list');
+      console.error('❌ Please create the bucket manually in Supabase Dashboard > Storage');
+      console.error('❌ Bucket name: "images", Public: true');
+      return false;
     }
 
     console.log('✅ "images" bucket exists');
     return true;
   } catch (error) {
-    console.error('❌ Error ensuring bucket exists:', error);
-    return false;
+    console.error('❌ Error checking bucket exists:', error);
+    // Hata olsa bile upload denemesi yapalım
+    return true;
   }
 }
 
@@ -103,8 +95,8 @@ async function uploadToSupabase(buffer, contentType, filename) {
     return null;
   }
 
-  // Bucket'ın var olduğundan emin ol
-  const bucketExists = await ensureBucketExists();
+  // Bucket'ın var olduğunu kontrol et (ama hata olsa bile upload denemesi yap)
+  const bucketExists = await checkBucketExists();
   if (!bucketExists) {
     console.error('❌ Cannot upload: "images" bucket does not exist');
     return null;
