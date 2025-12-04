@@ -40,6 +40,127 @@ if (supabase) {
 // Replicate API timeout ayarı
 const REPLICATE_TIMEOUT = 60000; // 60 saniye
 
+// ========== SUPABASE STORAGE HELPER FUNCTIONS ==========
+
+/**
+ * Upload Base64 image to Supabase Storage
+ * @param {string} base64Data - Base64 string (with or without data URI prefix)
+ * @param {string} filePath - Path in bucket (e.g., "avatars/character_id_profile.jpg")
+ * @returns {Promise<string|null>} - Public URL or null on error
+ */
+async function uploadBase64ToSupabase(base64Data, filePath) {
+  if (!supabase) {
+    console.error('❌ Supabase not configured');
+    return null;
+  }
+
+  try {
+    // Remove data URI prefix if present
+    let base64String = base64Data;
+    if (base64String.includes(',')) {
+      base64String = base64String.split(',')[1];
+    }
+
+    // Convert base64 to Buffer
+    const buffer = Buffer.from(base64String, 'base64');
+
+    // Upload to Supabase Storage
+    const { data, error } = await supabase.storage
+      .from('images')
+      .upload(filePath, buffer, {
+        contentType: 'image/jpeg',
+        upsert: true // Overwrite if exists
+      });
+
+    if (error) {
+      console.error('❌ Supabase Storage upload error:', error);
+      return null;
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from('images')
+      .getPublicUrl(filePath);
+
+    console.log(`✅ Uploaded image to Supabase Storage: ${filePath}`);
+    console.log(`📸 Public URL: ${urlData.publicUrl}`);
+    
+    return urlData.publicUrl;
+  } catch (error) {
+    console.error('❌ Error uploading to Supabase Storage:', error);
+    return null;
+  }
+}
+
+/**
+ * Download image from URL and upload to Supabase Storage
+ * @param {string} imageUrl - URL of the image to download
+ * @param {string} filePath - Path in bucket (e.g., "generated/uuid.jpg")
+ * @returns {Promise<string|null>} - Public URL or null on error
+ */
+async function uploadUrlToSupabase(imageUrl, filePath) {
+  if (!supabase) {
+    console.error('❌ Supabase not configured');
+    return null;
+  }
+
+  try {
+    // Download image from URL using https/http
+    const https = require('https');
+    const http = require('http');
+    const url = require('url');
+    
+    const parsedUrl = new URL(imageUrl);
+    const client = parsedUrl.protocol === 'https:' ? https : http;
+
+    const buffer = await new Promise((resolve, reject) => {
+      const request = client.get(imageUrl, (response) => {
+        if (response.statusCode !== 200) {
+          reject(new Error(`Failed to download image: ${response.statusCode}`));
+          return;
+        }
+
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () => resolve(Buffer.concat(chunks)));
+        response.on('error', reject);
+      });
+
+      request.on('error', reject);
+      request.setTimeout(30000, () => {
+        request.destroy();
+        reject(new Error('Download timeout'));
+      });
+    });
+
+    // Upload to Supabase Storage
+    const { data, error } = await supabase.storage
+      .from('images')
+      .upload(filePath, buffer, {
+        contentType: 'image/jpeg',
+        upsert: true
+      });
+
+    if (error) {
+      console.error('❌ Supabase Storage upload error:', error);
+      return null;
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from('images')
+      .getPublicUrl(filePath);
+
+    console.log(`✅ Downloaded and uploaded image to Supabase Storage: ${filePath}`);
+    console.log(`📸 Public URL: ${urlData.publicUrl}`);
+    
+    return urlData.publicUrl;
+  } catch (error) {
+    console.error('❌ Error uploading URL to Supabase Storage:', error);
+    return null;
+  }
+}
+
 // Karakter görselleri oluştur
 app.post('/api/create-images', async (req, res) => {
   try {
@@ -508,10 +629,29 @@ app.post('/api/generate-photo', async (req, res) => {
       });
     }
 
-    console.log('✅ Final photo generated:', imageURL);
+    console.log('✅ Final photo generated from Replicate:', imageURL);
 
+    // CRITICAL: Download Replicate image and upload to Supabase Storage for persistence
+    console.log('📥 Downloading image from Replicate and uploading to Supabase Storage...');
+    const uuid = require('crypto').randomUUID();
+    const filePath = `generated/${uuid}.jpg`;
+    const supabasePublicUrl = await uploadUrlToSupabase(imageURL, filePath);
+
+    if (!supabasePublicUrl) {
+      console.error('❌ Failed to upload to Supabase Storage, returning Replicate URL as fallback');
+      // Fallback to Replicate URL if Storage upload fails
+      res.json({ 
+        imageURL: imageURL,
+        characterId: characterId
+      });
+      return;
+    }
+
+    console.log('✅ Photo uploaded to Supabase Storage, returning Public URL:', supabasePublicUrl);
+
+    // Return Supabase Public URL (permanent) instead of Replicate URL (temporary)
     res.json({ 
-      imageURL: imageURL,
+      imageURL: supabasePublicUrl,
       characterId: characterId
     });
 
@@ -707,7 +847,7 @@ app.get('/api/load-characters', async (req, res) => {
   }
 });
 
-// Karakter fotoğraflarını base64 olarak kaydet (Supabase)
+// Karakter fotoğraflarını Supabase Storage'a yükle ve Public URL'i kaydet
 app.post('/api/save-character-images', async (req, res) => {
   try {
     const { userId, characterId, profileImageBase64, fullBodyImageBase64 } = req.body;
@@ -720,12 +860,27 @@ app.post('/api/save-character-images', async (req, res) => {
       return res.status(500).json({ error: 'Supabase not configured' });
     }
 
-    // Base64 fotoğrafları Supabase'deki characters tablosuna kaydet
-    // profile_image_url ve full_body_image_url alanlarına base64 data URI olarak kaydedeceğiz
-    const profileImageDataURI = profileImageBase64 ? `data:image/jpeg;base64,${profileImageBase64}` : null;
-    const fullBodyImageDataURI = fullBodyImageBase64 ? `data:image/jpeg;base64,${fullBodyImageBase64}` : null;
+    // Upload images to Supabase Storage and get Public URLs
+    let profileImagePublicUrl = null;
+    let fullBodyImagePublicUrl = null;
 
-    // Karakteri bul ve güncelle
+    if (profileImageBase64) {
+      const filePath = `avatars/${characterId}_profile.jpg`;
+      profileImagePublicUrl = await uploadBase64ToSupabase(profileImageBase64, filePath);
+      if (!profileImagePublicUrl) {
+        console.error('❌ Failed to upload profile image to Supabase Storage');
+      }
+    }
+
+    if (fullBodyImageBase64) {
+      const filePath = `avatars/${characterId}_fullbody.jpg`;
+      fullBodyImagePublicUrl = await uploadBase64ToSupabase(fullBodyImageBase64, filePath);
+      if (!fullBodyImagePublicUrl) {
+        console.error('❌ Failed to upload full body image to Supabase Storage');
+      }
+    }
+
+    // Karakteri bul ve güncelle (Public URLs ile)
     const { data: existingCharacter, error: fetchError } = await supabase
       .from('characters')
       .select('*')
@@ -739,28 +894,37 @@ app.post('/api/save-character-images', async (req, res) => {
     }
 
     if (existingCharacter) {
-      // Karakter var, güncelle
+      // Karakter var, güncelle (Public URLs ile)
       const updateData = {};
-      if (profileImageBase64) {
-        updateData.profile_image_url = profileImageDataURI;
+      if (profileImagePublicUrl) {
+        updateData.profile_image_url = profileImagePublicUrl;
       }
-      if (fullBodyImageBase64) {
-        updateData.full_body_image_url = fullBodyImageDataURI;
-      }
-
-      const { error: updateError } = await supabase
-        .from('characters')
-        .update(updateData)
-        .eq('user_id', userId)
-        .eq('character_id', characterId);
-
-      if (updateError) {
-        console.error('❌ Supabase error updating character images:', updateError);
-        return res.status(500).json({ error: 'Failed to update character images', details: updateError.message });
+      if (fullBodyImagePublicUrl) {
+        updateData.full_body_image_url = fullBodyImagePublicUrl;
       }
 
-      console.log(`✅ Updated character images for character ${characterId} and user ${userId}`);
-      res.json({ success: true });
+      if (Object.keys(updateData).length > 0) {
+        const { error: updateError } = await supabase
+          .from('characters')
+          .update(updateData)
+          .eq('user_id', userId)
+          .eq('character_id', characterId);
+
+        if (updateError) {
+          console.error('❌ Supabase error updating character images:', updateError);
+          return res.status(500).json({ error: 'Failed to update character images', details: updateError.message });
+        }
+
+        console.log(`✅ Updated character images for character ${characterId} and user ${userId}`);
+        console.log(`📸 Profile URL: ${profileImagePublicUrl || 'not updated'}`);
+        console.log(`📸 Full Body URL: ${fullBodyImagePublicUrl || 'not updated'}`);
+      }
+
+      res.json({ 
+        success: true,
+        profileImageURL: profileImagePublicUrl,
+        fullBodyImageURL: fullBodyImagePublicUrl
+      });
     } else {
       // Karakter yok, oluşturulamaz (bu endpoint sadece mevcut karakterler için)
       console.log(`⚠️ Character ${characterId} not found for user ${userId}, skipping image save`);
@@ -796,15 +960,37 @@ app.post('/api/save-messages', async (req, res) => {
       .eq('user_id', userId)
       .eq('character_id', characterId);
 
-    // Yeni mesajları ekle
-    const messagesToInsert = messages.map(msg => ({
-      user_id: userId,
-      character_id: characterId,
-      message_id: msg.id,
-      text: msg.text,
-      is_user: msg.isUser,
-      timestamp: msg.timestamp,
-      image_url: msg.imageURL || null
+    // Process messages: upload images to Supabase Storage if they are Base64
+    const messagesToInsert = await Promise.all(messages.map(async (msg) => {
+      let imageUrl = msg.imageURL || null;
+
+      // If imageURL is Base64, upload to Storage
+      if (imageUrl && (imageUrl.startsWith('data:image') || imageUrl.startsWith('file://'))) {
+        // Extract base64 if it's a data URI
+        if (imageUrl.startsWith('data:image')) {
+          const filePath = `chat_images/${msg.id}.jpg`;
+          const publicUrl = await uploadBase64ToSupabase(imageUrl, filePath);
+          if (publicUrl) {
+            imageUrl = publicUrl;
+            console.log(`✅ Uploaded message image to Storage: ${filePath}`);
+          } else {
+            console.error(`❌ Failed to upload message image for message ${msg.id}`);
+            imageUrl = null; // Don't save if upload failed
+          }
+        }
+        // If it's a file:// URL, skip (iOS will handle local files)
+        // We only upload Base64 images from iOS
+      }
+
+      return {
+        user_id: userId,
+        character_id: characterId,
+        message_id: msg.id,
+        text: msg.text,
+        is_user: msg.isUser,
+        timestamp: msg.timestamp,
+        image_url: imageUrl
+      };
     }));
 
     const { data, error } = await supabase
