@@ -1515,11 +1515,12 @@ app.post('/api/deduct-coins', async (req, res) => {
     // Pricing: Realtime Mini
     // Input Audio: ~$0.06 per 1k tokens = $0.00006 per token
     // Output Audio: ~$0.24 per 1k tokens = $0.00024 per token
-    // 1 Coin = $0.01
+    // Cost calculation: maliyetin 5 katı kadar coin düşecek
+    // 1 Coin = $0.01, yani maliyet * 5 / 0.01 = maliyet * 500
     const inputCostUSD = inputTokens * 0.00006;
     const outputCostUSD = outputTokens * 0.00024;
     const totalCostUSD = inputCostUSD + outputCostUSD;
-    const coinCost = Math.ceil(totalCostUSD / 0.01); // Round up to nearest coin
+    const coinCost = Math.ceil(totalCostUSD * 500); // Maliyetin 5 katı (500x multiplier)
 
     console.log(`💰 Cost calculation - Input: $${inputCostUSD.toFixed(4)}, Output: $${outputCostUSD.toFixed(4)}, Total: $${totalCostUSD.toFixed(4)}, Coins: ${coinCost}`);
 
