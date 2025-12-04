@@ -1500,6 +1500,104 @@ app.delete('/api/delete-messages', async (req, res) => {
   }
 });
 
+// ========== COIN DEDUCTION ENDPOINT ==========
+
+app.post('/api/deduct-coins', async (req, res) => {
+  try {
+    const { userId, inputTokens, outputTokens, model } = req.body;
+
+    if (!userId || inputTokens === undefined || outputTokens === undefined) {
+      return res.status(400).json({ error: 'Missing required fields: userId, inputTokens, outputTokens' });
+    }
+
+    console.log(`💰 Coin deduction request - User: ${userId}, Input: ${inputTokens}, Output: ${outputTokens}, Model: ${model}`);
+
+    // Pricing: Realtime Mini
+    // Input Audio: ~$0.06 per 1k tokens = $0.00006 per token
+    // Output Audio: ~$0.24 per 1k tokens = $0.00024 per token
+    // 1 Coin = $0.01
+    const inputCostUSD = inputTokens * 0.00006;
+    const outputCostUSD = outputTokens * 0.00024;
+    const totalCostUSD = inputCostUSD + outputCostUSD;
+    const coinCost = Math.ceil(totalCostUSD / 0.01); // Round up to nearest coin
+
+    console.log(`💰 Cost calculation - Input: $${inputCostUSD.toFixed(4)}, Output: $${outputCostUSD.toFixed(4)}, Total: $${totalCostUSD.toFixed(4)}, Coins: ${coinCost}`);
+
+    // Get or create user record in Supabase
+    // First, check if users table exists, if not create it
+    let { data: userData, error: fetchError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (fetchError && fetchError.code === 'PGRST116') {
+      // User doesn't exist, create with 500 coins
+      console.log(`📝 User ${userId} not found, creating with 500 coins`);
+      const { data: newUser, error: createError } = await supabase
+        .from('users')
+        .insert([{
+          user_id: userId,
+          coin_balance: 500,
+          created_at: new Date().toISOString()
+        }])
+        .select()
+        .single();
+
+      if (createError) {
+        console.error('❌ Failed to create user:', createError);
+        return res.status(500).json({ error: 'Failed to create user', details: createError.message });
+      }
+
+      userData = newUser;
+    } else if (fetchError) {
+      console.error('❌ Error fetching user:', fetchError);
+      return res.status(500).json({ error: 'Failed to fetch user', details: fetchError.message });
+    }
+
+    const currentBalance = userData?.coin_balance || 500;
+    console.log(`💰 Current balance: ${currentBalance} coins`);
+
+    if (currentBalance < coinCost) {
+      console.log(`❌ Insufficient coins - Required: ${coinCost}, Available: ${currentBalance}`);
+      return res.status(400).json({ 
+        error: 'Insufficient coins', 
+        required: coinCost, 
+        available: currentBalance 
+      });
+    }
+
+    const newBalance = currentBalance - coinCost;
+
+    // Update user balance
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ coin_balance: newBalance })
+      .eq('user_id', userId);
+
+    if (updateError) {
+      console.error('❌ Failed to update user balance:', updateError);
+      return res.status(500).json({ error: 'Failed to update balance', details: updateError.message });
+    }
+
+    console.log(`✅ Coin deduction successful - Deducted: ${coinCost}, New balance: ${newBalance}`);
+
+    res.json({
+      success: true,
+      deductedAmount: coinCost,
+      newBalance: newBalance,
+      costBreakdown: {
+        inputCostUSD: inputCostUSD.toFixed(4),
+        outputCostUSD: outputCostUSD.toFixed(4),
+        totalCostUSD: totalCostUSD.toFixed(4)
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error in deduct-coins:', error);
+    res.status(500).json({ error: 'Failed to deduct coins', details: error.message });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
