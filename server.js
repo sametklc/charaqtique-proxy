@@ -1024,15 +1024,39 @@ app.post('/api/save-character-images', async (req, res) => {
     }
 
     // Karakteri bul ve güncelle (Public URLs ile)
-    const { data: existingCharacter, error: fetchError } = await supabase
-      .from('characters')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('character_id', characterId)
-      .single();
+    // Retry mekanizması: Karakter henüz kaydedilmemiş olabilir, birkaç kez deneyelim
+    let existingCharacter = null;
+    let retries = 3;
+    let fetchError = null;
 
-    if (fetchError && fetchError.code !== 'PGRST116') { // PGRST116 = not found, bu normal
-      console.error('❌ Supabase error fetching character:', fetchError);
+    while (retries > 0 && !existingCharacter) {
+      const { data, error } = await supabase
+        .from('characters')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('character_id', characterId)
+        .single();
+
+      if (error && error.code !== 'PGRST116') { // PGRST116 = not found
+        fetchError = error;
+        console.error('❌ Supabase error fetching character:', error);
+        break;
+      }
+
+      if (data) {
+        existingCharacter = data;
+        break;
+      }
+
+      // Karakter bulunamadı, 500ms bekle ve tekrar dene
+      retries--;
+      if (retries > 0) {
+        console.log(`⚠️ Character ${characterId} not found, retrying... (${retries} attempts left)`);
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    if (fetchError && fetchError.code !== 'PGRST116') {
       return res.status(500).json({ error: 'Failed to fetch character', details: fetchError.message });
     }
 
@@ -1069,9 +1093,17 @@ app.post('/api/save-character-images', async (req, res) => {
         fullBodyImageURL: fullBodyImagePublicUrl
       });
     } else {
-      // Karakter yok, oluşturulamaz (bu endpoint sadece mevcut karakterler için)
-      console.log(`⚠️ Character ${characterId} not found for user ${userId}, skipping image save`);
-      res.json({ success: true, message: 'Character not found, images not saved' });
+      // Karakter hala bulunamadı, fotoğraflar yüklenmiş ama karakter kaydına kaydedilemedi
+      console.log(`⚠️ Character ${characterId} not found for user ${userId} after retries, images uploaded but not saved to character record`);
+      console.log(`📸 Profile URL uploaded: ${profileImagePublicUrl || 'none'}`);
+      console.log(`📸 Full Body URL uploaded: ${fullBodyImagePublicUrl || 'none'}`);
+      // Fotoğraflar yüklenmiş, karakter kaydına kaydedilemedi ama başarılı sayılabilir
+      res.json({ 
+        success: true, 
+        message: 'Images uploaded but character not found',
+        profileImageURL: profileImagePublicUrl,
+        fullBodyImageURL: fullBodyImagePublicUrl
+      });
     }
   } catch (error) {
     console.error('❌ Error saving character images:', error);
