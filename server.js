@@ -1003,7 +1003,8 @@ app.post('/api/save-messages', async (req, res) => {
       .eq('character_id', characterId);
 
     // Process messages: upload images to Supabase Storage if they are Base64
-    const messagesToInsert = await Promise.all(messages.map(async (msg) => {
+    console.log('💾 Processing', messages.length, 'messages...');
+    const messagesToInsert = await Promise.all(messages.map(async (msg, index) => {
       let imageUrl = msg.imageURL || null;
 
       // If imageURL is Base64, upload to Storage
@@ -1011,6 +1012,7 @@ app.post('/api/save-messages', async (req, res) => {
         // Extract base64 if it's a data URI
         if (imageUrl.startsWith('data:image')) {
           const filePath = `chat_images/${msg.id}.jpg`;
+          console.log(`💾 Uploading message image ${index + 1}/${messages.length} to Storage: ${filePath}`);
           const publicUrl = await uploadBase64ToSupabase(imageUrl, filePath);
           if (publicUrl) {
             imageUrl = publicUrl;
@@ -1035,16 +1037,18 @@ app.post('/api/save-messages', async (req, res) => {
       };
     }));
 
+    console.log('💾 Inserting', messagesToInsert.length, 'messages into Supabase...');
     const { data, error } = await supabase
       .from('messages')
       .insert(messagesToInsert);
 
     if (error) {
       console.error('❌ Supabase error saving messages:', error);
+      console.error('❌ Error details:', JSON.stringify(error, null, 2));
       return res.status(500).json({ error: 'Failed to save messages', details: error.message });
     }
 
-    console.log(`✅ Saved ${messages.length} messages for user ${userId}, character ${characterId}`);
+    console.log(`✅ Successfully saved ${messages.length} messages for user ${userId}, character ${characterId}`);
     res.json({ success: true, count: messages.length });
   } catch (error) {
     console.error('❌ Error saving messages:', error);
@@ -1055,16 +1059,23 @@ app.post('/api/save-messages', async (req, res) => {
 // Mesajları yükle (Supabase)
 app.get('/api/load-messages', async (req, res) => {
   try {
+    console.log('📥 ========== LOAD MESSAGES REQUEST ==========');
     const { userId, characterId } = req.query;
 
+    console.log('📥 User ID:', userId);
+    console.log('📥 Character ID:', characterId);
+
     if (!userId || !characterId) {
+      console.error('❌ Missing userId or characterId');
       return res.status(400).json({ error: 'userId and characterId are required' });
     }
 
     if (!supabase) {
+      console.error('❌ Supabase not configured');
       return res.status(500).json({ error: 'Supabase not configured' });
     }
 
+    console.log('📥 Querying Supabase for messages...');
     const { data, error } = await supabase
       .from('messages')
       .select('*')
@@ -1074,22 +1085,35 @@ app.get('/api/load-messages', async (req, res) => {
 
     if (error) {
       console.error('❌ Supabase error loading messages:', error);
+      console.error('❌ Error details:', JSON.stringify(error, null, 2));
       return res.status(500).json({ error: 'Failed to load messages', details: error.message });
     }
 
-    // Supabase'den gelen verileri iOS formatına çevir
-    const messages = (data || []).map(row => ({
-      id: row.message_id,
-      text: row.text,
-      isUser: row.is_user,
-      timestamp: row.timestamp,
-      imageURL: row.image_url
-    }));
+    console.log('📥 Supabase returned', data?.length || 0, 'messages');
 
-    console.log(`✅ Loaded ${messages.length} messages for user ${userId}, character ${characterId}`);
+    // Supabase'den gelen verileri iOS formatına çevir
+    const messages = (data || []).map((row, index) => {
+      const message = {
+        id: row.message_id,
+        text: row.text,
+        isUser: row.is_user,
+        timestamp: row.timestamp,
+        imageURL: row.image_url
+      };
+      
+      // İlk 3 mesajı logla
+      if (index < 3) {
+        console.log(`📥 Message ${index + 1}: id=${row.message_id}, text=${row.text?.substring(0, 50)}..., isUser=${row.is_user}, imageURL=${row.image_url || 'nil'}`);
+      }
+      
+      return message;
+    });
+
+    console.log(`✅ Successfully loaded ${messages.length} messages for user ${userId}, character ${characterId}`);
     res.json({ success: true, messages });
   } catch (error) {
     console.error('❌ Error loading messages:', error);
+    console.error('❌ Error stack:', error.stack);
     res.status(500).json({ error: 'Failed to load messages', details: error.message });
   }
 });
