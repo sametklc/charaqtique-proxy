@@ -491,19 +491,23 @@ app.post('/api/generate-photo', async (req, res) => {
     console.log('📸 Has profile image for face consistency:', !!profileImageBase64);
     console.log('📸 Is portrait request:', isPortraitRequest);
     
-    // ========== PROMPT CONSTRUCTION - STRICTLY SEPARATED ==========
+    // ========== PROMPT CONSTRUCTION - USER DESCRIPTION FIRST ==========
+    // CRITICAL: User's description is the PRIMARY and MAIN focus.
+    // Character traits are kept MINIMAL - only for style consistency.
+    // Face consistency is maintained via Img2Img/FaceSwap, NOT through detailed prompts.
     
-    // SCENARIO A: Portrait/Close-up Prompt (Detailed - includes facial features)
-    // This prompt includes ALL details (physicalDesc, eyeDesc, bodyDesc) to guide the style
-    const photoPrompt = `${description}, ${characterName} (${physicalDesc}, ${eyeDesc}, ${bodyDesc}), ${appearanceDesc.toLowerCase()} fashion style, high quality, detailed, photorealistic`;
+    // SCENARIO A: Portrait/Close-up Prompt
+    // User description is the MAIN content, minimal character info for style
+    const photoPrompt = `${description}, ${characterName}, ${appearanceDesc.toLowerCase()} style, high quality, photorealistic`;
     
-    // SCENARIO B: Action/Full-body Scene Prompt (Minimal - NO facial details)
-    // CRITICAL: Exclude eyeDesc and detailed physicalDesc to prevent portrait bias
-    // Only include: user description + body type + appearance + wide angle directives
-    const scenePrompt = `${description}, ${characterName} (${bodyDesc}), ${appearanceDesc.toLowerCase()} fashion style, wide angle shot, full body visible, complete scene, environmental context, high quality, detailed, photorealistic`;
+    // SCENARIO B: Action/Full-body Scene Prompt
+    // User description is the MAIN content, NO facial details to prevent zoom-in
+    // Scene is generated based on user's description, face is swapped later
+    const scenePrompt = `${description}, ${characterName}, ${appearanceDesc.toLowerCase()} style, high quality, photorealistic`;
     
     console.log('📸 Photo prompt (Scenario A - Portrait):', photoPrompt);
     console.log('📸 Scene prompt (Scenario B - Action):', scenePrompt);
+    console.log('📸 User description (PRIMARY):', description);
 
     let imageURL;
 
