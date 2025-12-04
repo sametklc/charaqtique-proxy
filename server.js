@@ -305,11 +305,6 @@ app.post('/api/generate-photo', async (req, res) => {
     const eyeDesc = getEyeColorDescription(characterTraits?.eyeColorAndFeatures || '');
     const bodyDesc = getBodyTypeDescription(characterTraits?.bodyTypeAndHeight || '');
     const appearanceDesc = getAppearanceDescription(characterTraits?.appearance || '');
-
-    // Karakterin görünümünü koruyarak istenen fotoğrafı üret
-    // Kullanıcının isteğine öncelik ver, karakterin görünümünü koru
-    // Portrait zorlaması yapma - kullanıcı ne istiyorsa onu üret
-    // Kullanıcının description'ını ön plana çıkar, karakter özelliklerini arka plana al
     
     // Portre isteği kontrolü
     const descriptionLower = description.toLowerCase();
@@ -317,21 +312,24 @@ app.post('/api/generate-photo', async (req, res) => {
                               descriptionLower.includes('headshot') || 
                               descriptionLower.includes('close-up') ||
                               descriptionLower.includes('closeup') ||
-                              descriptionLower.includes('face only') ||
-                              descriptionLower.includes('headshot');
+                              descriptionLower.includes('face only');
     
-    // Eğer kullanıcı açıkça portre istemiyorsa, portre zorlamasını engelle
-    // Sadece portre zorlamasını engelle, kullanıcının istediği kompozisyonu koru
-    const antiPortraitPrompt = isPortraitRequest ? '' : ', AVOID portrait, AVOID close-up, AVOID headshot, AVOID face only, AVOID upper body only';
-    
-    // Prompt'u oluştur - kullanıcının isteği çok ön planda, karakter özellikleri arka planda
-    // Kullanıcının description'ını başa al, karakter özelliklerini sona al
-    // Kullanıcı ne istiyorsa onu üret (full body zorlaması yok)
-    const photoPrompt = `${description}${antiPortraitPrompt}, ${characterName} (${physicalDesc}, ${eyeDesc}, ${bodyDesc}), ${appearanceDesc.toLowerCase()} fashion style, high quality, detailed, photorealistic`;
-
-    console.log('📸 Photo prompt:', photoPrompt);
     console.log('📸 Has profile image for face consistency:', !!profileImageBase64);
     console.log('📸 Is portrait request:', isPortraitRequest);
+    
+    // ========== PROMPT CONSTRUCTION - STRICTLY SEPARATED ==========
+    
+    // SCENARIO A: Portrait/Close-up Prompt (Detailed - includes facial features)
+    // This prompt includes ALL details (physicalDesc, eyeDesc, bodyDesc) to guide the style
+    const photoPrompt = `${description}, ${characterName} (${physicalDesc}, ${eyeDesc}, ${bodyDesc}), ${appearanceDesc.toLowerCase()} fashion style, high quality, detailed, photorealistic`;
+    
+    // SCENARIO B: Action/Full-body Scene Prompt (Minimal - NO facial details)
+    // CRITICAL: Exclude eyeDesc and detailed physicalDesc to prevent portrait bias
+    // Only include: user description + body type + appearance + wide angle directives
+    const scenePrompt = `${description}, ${characterName} (${bodyDesc}), ${appearanceDesc.toLowerCase()} fashion style, wide angle shot, full body visible, complete scene, environmental context, high quality, detailed, photorealistic`;
+    
+    console.log('📸 Photo prompt (Scenario A - Portrait):', photoPrompt);
+    console.log('📸 Scene prompt (Scenario B - Action):', scenePrompt);
 
     let imageURL;
 
@@ -407,13 +405,15 @@ app.post('/api/generate-photo', async (req, res) => {
       console.log('📸 SCENARIO B: Action/Full-body request - using Text-to-Image + Face Swap');
       
       // Step 1: Generate scene with Flux 1.1 Pro (Text-to-Image, NO image input)
+      // CRITICAL: Use scenePrompt (NOT photoPrompt) to avoid portrait bias
       const fluxInput = {
-        prompt: photoPrompt,
+        prompt: scenePrompt, // Use scenePrompt which excludes facial details
         aspect_ratio: "16:9",
         output_format: "jpg"
       };
       
       console.log('📸 Step 1: Generating scene with Flux 1.1 Pro (text-to-image)...');
+      console.log('📸 Using scenePrompt (no facial details to prevent zoom-in):', scenePrompt);
       
       let sceneImageURL;
       try {
@@ -443,9 +443,9 @@ app.post('/api/generate-photo', async (req, res) => {
         });
       }
       
-      // Step 2: Face Swap using cdingram/face-swap
+      // Step 2: Face Swap using yan-ops/face_swap
       if (profileImageBase64 && sceneImageURL) {
-        console.log('📸 Step 2: Performing face swap with cdingram/face-swap...');
+        console.log('📸 Step 2: Performing face swap with yan-ops/face_swap...');
         
         try {
           // Convert base64 to data URL for face swap
@@ -462,7 +462,7 @@ app.post('/api/generate-photo', async (req, res) => {
           });
           
           const faceSwapOutput = await Promise.race([
-            replicate.run("cdingram/face-swap:d1d6ea8c8be89d664a07a457526f7128109dee7030fdac424788d762c71ed111", { input: faceSwapInput }),
+            replicate.run("yan-ops/face_swap", { input: faceSwapInput }),
             new Promise((_, reject) => 
               setTimeout(() => reject(new Error('Face swap timeout')), REPLICATE_TIMEOUT * 3)
             )
